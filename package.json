@@ -4,7 +4,8 @@
   "description": "A small Electron fantasy canvas prototype",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "debug": "electron . -- --debug"
   },
   "devDependencies": {
     "electron": "^35.0.0"

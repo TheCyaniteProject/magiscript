@@ -25,6 +25,7 @@ const deleteModalCancel = document.getElementById('deleteModalCancel');
 const dropZone = document.getElementById('dropZone');
 const canvas = document.getElementById('sceneCanvas');
 const context = canvas.getContext('2d');
+const spellcircleDebugEnabled = Boolean(window.SpellcircleFile?.isDebugEnabled?.());
 
 const topLevelNodes = [];
 let focusedNode = null;
@@ -192,6 +193,26 @@ function appendMessageLog(value) {
   messageLogBody.scrollTop = messageLogBody.scrollHeight;
 }
 
+function debugSpellcircle(step, details = {}) {
+  if (!spellcircleDebugEnabled) {
+    return;
+  }
+
+  const payload = {
+    source: 'renderer',
+    step,
+    details,
+    timestamp: new Date().toISOString(),
+  };
+
+  console.log('[Spellcircle Debug]', payload);
+
+  const detailText = Object.keys(details).length > 0
+    ? ` ${JSON.stringify(details)}`
+    : '';
+  appendMessageLog(`[Spellcircle Debug] ${step}${detailText}`);
+}
+
 function getViewportSize() {
   return {
     width: canvas.clientWidth,
@@ -243,70 +264,70 @@ function getNodeShadowBlur(node) {
 }
 
 function createStartGlyph(parentNodeGuid) {
-  return {
-    guid: createGuid(),
-    type: 'start',
-    parentNodeGuid,
-    nextGlyphGuid: null,
-    nextGlyphGuidIsAuto: true,
-    x: 0,
-    y: 0,
-    radius: 0,
-    lineWidth: BASE_NODE_LINE_WIDTH,
-  };
+  const glyph = new StartGlyph({ guid: createGuid(), parentNodeGuid });
+  glyph.lineWidth = BASE_NODE_LINE_WIDTH;
+  return glyph;
 }
 
 function createGlyph(type, parentNodeGuid) {
-  const glyph = {
-    guid: createGuid(),
-    type,
-    parentNodeGuid,
-    nextGlyphGuid: null,
-    nextGlyphGuidIsAuto: true,
-    x: 0,
-    y: 0,
-    radius: CHILD_BASE_RADIUS,
-    lineWidth: BASE_NODE_LINE_WIDTH,
-    ring: 'inner',
-  };
+  const guid = createGuid();
+  let glyph = null;
 
-  if (type === 'variable') {
-    glyph.value = 'null';
-    glyph.name = createVariableName();
+  switch (type) {
+    case 'variable':
+      glyph = new VariableGlyph({
+        guid,
+        parentNodeGuid,
+        name: createVariableName(),
+        value: 'null',
+      });
+      break;
+    case 'value':
+      glyph = new ValueGlyph({
+        guid,
+        parentNodeGuid,
+        name: 'Value',
+        inputIndex: 1,
+      });
+      break;
+    case 'reference':
+      glyph = new ReferenceGlyph({ guid, parentNodeGuid, referenceGlyphGuid: null });
+      break;
+    case 'add':
+      glyph = new AddGlyph({ guid, parentNodeGuid, operand: '1' });
+      break;
+    case 'subtract':
+      glyph = new SubtractGlyph({ guid, parentNodeGuid, operand: '1' });
+      break;
+    case 'output':
+      glyph = new OutputGlyph({ guid, parentNodeGuid });
+      break;
+    default:
+      glyph = new Glyph({ guid, type, parentNodeGuid });
+      break;
   }
 
-  if (type === 'value') {
-    glyph.name = 'Value';
-    glyph.inputIndex = 1;
-  }
-
-  if (type === 'add' || type === 'subtract') {
-    glyph.operand = '1';
-  }
-
-  if (type === 'reference') {
-    glyph.referenceGlyphGuid = null;
-  }
-
+  glyph.nextGlyphGuid = null;
+  glyph.nextGlyphGuidIsAuto = true;
+  glyph.x = 0;
+  glyph.y = 0;
+  glyph.radius = CHILD_BASE_RADIUS;
+  glyph.lineWidth = BASE_NODE_LINE_WIDTH;
+  glyph.ring = 'inner';
+  debugSpellcircle('createGlyph', { type, guid: glyph.guid, parentNodeGuid });
   return glyph;
 }
 
 function createNode(x, y, radius, parentNodeGuid = null, options = {}) {
-  const node = {
+  const node = new NodeGlyph({
     guid: createGuid(),
-    type: 'node',
     parentNodeGuid,
-    nextGlyphGuid: null,
-    x,
-    y,
-    radius,
-    lineWidth: getStrokeWidthForRadius(radius),
-    glyphs: [],
-    outerGlyphs: [],
-    startGlyph: null,
-    layout: null,
     isRoot: Boolean(options.isRoot),
-  };
+  });
+  node.x = x;
+  node.y = y;
+  node.radius = radius;
+  node.lineWidth = getStrokeWidthForRadius(radius);
 
   node.startGlyph = createStartGlyph(node.guid);
 
@@ -858,7 +879,7 @@ function drawNodeConnections(node, nodeLineToolActive) {
 
   context.save();
   applyCameraTransform();
-  context.strokeStyle = '#17120b';
+  context.strokeStyle = 'rgba(23, 18, 11, 0.45)';
   context.lineCap = 'round';
   context.shadowColor = 'rgba(23, 18, 11, 0.08)';
   context.shadowBlur = 6 * node.radius / ROOT_NODE_RADIUS;
@@ -866,25 +887,7 @@ function drawNodeConnections(node, nodeLineToolActive) {
   const inputPoints = new Map();
   const outputPoints = new Map();
   const paramInputPoints = new Map();
-  const incomingCounts = new Map();
   const outgoingLineEndSquares = new Map();
-
-  const getGlyphParamInputPoint = (targetGlyph) => {
-    const circleOffset = Math.max(node.lineWidth * 2.6, node.radius * 0.03);
-    const circleRadius = Math.max(node.lineWidth * 2.3, node.radius * 0.036);
-    const spread = circleRadius * 2.4;
-    const topEdge = getGlyphOuterRadius(targetGlyph, 0, -1);
-    const topX = targetGlyph.x;
-    const topY = targetGlyph.y - (topEdge + circleOffset);
-
-    const hasOuterParamConnection = node.outerGlyphs.some((glyph) => glyph.nextGlyphGuid === targetGlyph.guid);
-    const shouldCenter = hasOuterParamConnection && (targetGlyph.type === 'add' || targetGlyph.type === 'subtract');
-
-    return {
-      x: shouldCenter ? topX : topX + spread * 0.55,
-      y: topY,
-    };
-  };
 
   const drawConnectionSegment = (fromGlyph, toX, toY, kind = 'normal') => {
     const dx = toX - fromGlyph.x;
@@ -909,10 +912,23 @@ function drawNodeConnections(node, nodeLineToolActive) {
     drawEndSquare(toX, toY);
 
     if (nodeLineToolActive) {
-      outputPoints.set(fromGlyph.guid, { x: lineStartX, y: lineStartY });
+      outputPoints.set(fromGlyph.guid, new IOConnector({
+        x: lineStartX,
+        y: lineStartY,
+        kind: 'output',
+        ownerGuid: fromGlyph.guid,
+      }));
       outgoingLineEndSquares.set(fromGlyph.guid, { x: toX, y: toY });
       if (kind === 'normal') {
-        inputPoints.set(execMap.get(fromGlyph.nextGlyphGuid)?.guid, { x: toX, y: toY });
+        const targetGuid = execMap.get(fromGlyph.nextGlyphGuid)?.guid;
+        if (targetGuid) {
+          inputPoints.set(targetGuid, new IOConnector({
+            x: toX,
+            y: toY,
+            kind: 'input',
+            ownerGuid: targetGuid,
+          }));
+        }
       }
     }
 
@@ -942,7 +958,7 @@ function drawNodeConnections(node, nodeLineToolActive) {
     const perpY = unitX;
 
     context.save();
-    context.fillStyle = '#17120b';
+    context.fillStyle = 'rgba(23, 18, 11, 0.45)';
     context.shadowBlur = 0;
     context.beginPath();
     context.moveTo(tipX, tipY);
@@ -960,19 +976,22 @@ function drawNodeConnections(node, nodeLineToolActive) {
 
     const squareSize = Math.max(node.lineWidth * 3.2, node.radius * 0.05);
     context.save();
-    context.fillStyle = '#17120b';
+    context.fillStyle = 'rgba(23, 18, 11, 0.45)';
     context.shadowBlur = 0;
     context.fillRect(endX - squareSize / 2, endY - squareSize / 2, squareSize, squareSize);
     context.restore();
   };
 
-  const drawIoCircle = (x, y, dashed, kind) => {
-    const circleRadius = Math.max(node.lineWidth * 2.3, node.radius * 0.036);
+  const drawIoCircle = (x, y, dashed, kind, filled = false, sizeScale = 1) => {
+    const circleRadius = Math.max(node.lineWidth * 2.3, node.radius * 0.036) * sizeScale;
     const circleLineWidth = Math.max(1, node.lineWidth * 0.9);
 
     context.save();
     context.lineWidth = circleLineWidth;
-    if (kind === 'param-input') {
+    if (filled) {
+      context.strokeStyle = 'rgba(23, 18, 11, 0.45)';
+      context.fillStyle = 'rgba(23, 18, 11, 0.45)';
+    } else if (kind === 'param-input') {
       context.strokeStyle = 'rgba(205, 125, 28, 0.8)';
     } else if (kind === 'outer-output') {
       context.strokeStyle = 'rgba(205, 125, 28, 0.8)';
@@ -983,7 +1002,7 @@ function drawNodeConnections(node, nodeLineToolActive) {
     }
     context.shadowBlur = 0;
 
-    if (dashed) {
+    if (!filled && dashed) {
       context.setLineDash([circleLineWidth * 1.95, circleLineWidth * 1.8]);
     } else {
       context.setLineDash([]);
@@ -991,151 +1010,186 @@ function drawNodeConnections(node, nodeLineToolActive) {
 
     context.beginPath();
     context.arc(x, y, circleRadius, 0, Math.PI * 2);
-    context.stroke();
+    if (filled) {
+      context.fill();
+    } else {
+      context.stroke();
+    }
     context.restore();
   };
 
-  for (let index = 0; index < execGlyphs.length; index += 1) {
-    const currentGlyph = execGlyphs[index];
-    const nextGlyph = currentGlyph.nextGlyphGuid ? execMap.get(currentGlyph.nextGlyphGuid) : null;
+  const circleOffset = Math.max(node.lineWidth * 2.6, node.radius * 0.03);
+  const circleRadius = Math.max(node.lineWidth * 2.3, node.radius * 0.036);
+  const ringGlyphs = [...execGlyphs, ...node.outerGlyphs];
 
-    if (!nextGlyph) {
-      continue;
+  const glyphByGuid = new Map(ringGlyphs.map((glyph) => [glyph.guid, glyph]));
+  const inputSourceByTarget = new Map();
+  const outputTargetBySource = new Map();
+  const paramSourceByTarget = new Map();
+
+  execGlyphs.forEach((glyph) => {
+    if (glyph.nextGlyphGuid) {
+      outputTargetBySource.set(glyph.guid, glyph.nextGlyphGuid);
+      inputSourceByTarget.set(glyph.nextGlyphGuid, glyph.guid);
+    }
+  });
+
+  node.outerGlyphs.forEach((glyph) => {
+    if (glyph.nextGlyphGuid) {
+      outputTargetBySource.set(glyph.guid, glyph.nextGlyphGuid);
+      paramSourceByTarget.set(glyph.nextGlyphGuid, glyph.guid);
+    }
+  });
+
+  ringGlyphs.forEach((glyph) => {
+    const isOuterDataGlyph = glyph.ring === 'outer'
+      && (glyph.type === 'variable' || glyph.type === 'reference' || glyph.type === 'value');
+
+    const inputSourceGuid = inputSourceByTarget.get(glyph.guid) || null;
+    const outputTargetGuid = outputTargetBySource.get(glyph.guid) || null;
+    const paramSourceGuid = paramSourceByTarget.get(glyph.guid) || null;
+
+    const inputSource = inputSourceGuid ? glyphByGuid.get(inputSourceGuid) : null;
+    const outputTarget = outputTargetGuid ? glyphByGuid.get(outputTargetGuid) : null;
+    const paramSource = paramSourceGuid ? glyphByGuid.get(paramSourceGuid) : null;
+
+    const showAllIO = nodeLineToolActive;
+    const hasInputConnection = Boolean(inputSourceGuid);
+    const hasOutputConnection = Boolean(outputTargetGuid);
+    const hasParamConnection = Boolean(paramSourceGuid);
+    const allowParam = glyph.type === 'node' || glyph.type === 'add' || glyph.type === 'subtract';
+    const resolvedInputSource = glyph.type === 'start' ? (paramSource || inputSource) : inputSource;
+
+    glyph.updateIOLayout({
+      inputSource: resolvedInputSource,
+      outputTarget,
+      paramSource,
+      circleOffset,
+      circleRadius,
+      allowInput: !isOuterDataGlyph && (showAllIO || hasInputConnection || (glyph.type === 'start' && hasParamConnection)),
+      allowOutput: showAllIO || hasOutputConnection,
+      allowParam: allowParam && (showAllIO || hasParamConnection),
+    });
+  });
+
+  const drawConnectionLine = (fromGlyph, fromPoint, toPoint, kind = 'normal') => {
+    if (!fromPoint || !toPoint) {
+      return;
     }
 
-    const dx = nextGlyph.x - currentGlyph.x;
-    const dy = nextGlyph.y - currentGlyph.y;
-    const distance = Math.hypot(dx, dy);
-
-    if (distance === 0) {
-      continue;
-    }
-
-    const unitX = dx / distance;
-    const unitY = dy / distance;
-    const currentOffset = getGlyphOuterRadius(currentGlyph, unitX, unitY) + lineGap;
-    const nextOffset = getGlyphOuterRadius(nextGlyph, -unitX, -unitY) + lineGap;
-
-    if (distance <= currentOffset + nextOffset) {
-      continue;
-    }
-
-    const lineStartX = currentGlyph.x + unitX * currentOffset;
-    const lineStartY = currentGlyph.y + unitY * currentOffset;
-    const lineEndX = nextGlyph.x - unitX * nextOffset;
-    const lineEndY = nextGlyph.y - unitY * nextOffset;
     context.beginPath();
     context.lineWidth = node.lineWidth * 0.9;
-    context.moveTo(lineStartX, lineStartY);
-    context.lineTo(lineEndX, lineEndY);
+    context.moveTo(fromPoint.x, fromPoint.y);
+    context.lineTo(toPoint.x, toPoint.y);
     context.stroke();
-    drawMidArrow(lineStartX, lineStartY, lineEndX, lineEndY);
-    drawEndSquare(lineEndX, lineEndY);
+    drawMidArrow(fromPoint.x, fromPoint.y, toPoint.x, toPoint.y);
+    drawEndSquare(toPoint.x, toPoint.y);
 
-    if (nodeLineToolActive) {
-      outputPoints.set(currentGlyph.guid, { x: lineStartX, y: lineStartY });
-      inputPoints.set(nextGlyph.guid, { x: lineEndX, y: lineEndY });
-      outgoingLineEndSquares.set(currentGlyph.guid, { x: lineEndX, y: lineEndY });
-      incomingCounts.set(nextGlyph.guid, (incomingCounts.get(nextGlyph.guid) || 0) + 1);
-    }
-  }
-
-  for (const outerGlyph of node.outerGlyphs) {
-    if (!outerGlyph.nextGlyphGuid) {
-      continue;
-    }
-
-    if (outerGlyph.nextGlyphGuid === node.startGlyph.guid) {
-      const circleOffset = Math.max(node.lineWidth * 2.6, node.radius * 0.03);
-      const startPoint = getGlyphDefaultInputPoint(node, node.startGlyph, circleOffset);
-      drawConnectionSegment(outerGlyph, startPoint.x, startPoint.y, 'param');
-
-      if (nodeLineToolActive) {
-        paramInputPoints.set(node.startGlyph.guid, startPoint);
+    if (nodeLineToolActive && fromGlyph?.guid) {
+      if (fromPoint.kind === 'output') {
+        outputPoints.set(fromGlyph.guid, fromPoint);
       }
-
-      continue;
-    }
-
-    const targetGlyph = execMap.get(outerGlyph.nextGlyphGuid);
-    if (!targetGlyph || !(isNode(targetGlyph) || targetGlyph.type === 'add' || targetGlyph.type === 'subtract')) {
-      continue;
-    }
-
-    const paramPoint = getGlyphParamInputPoint(targetGlyph);
-    drawConnectionSegment(outerGlyph, paramPoint.x, paramPoint.y, 'param');
-
-    if (nodeLineToolActive) {
-      paramInputPoints.set(targetGlyph.guid, paramPoint);
-    }
-  }
-
-  if (nodeLineToolActive) {
-    const circleOffset = Math.max(node.lineWidth * 2.6, node.radius * 0.03);
-    const circleRadius = Math.max(node.lineWidth * 2.3, node.radius * 0.036);
-    const inputSpread = circleRadius * 2.4;
-    const ringGlyphs = [...execGlyphs, ...node.outerGlyphs];
-
-    ringGlyphs.forEach((glyph) => {
-      const dx = glyph.x - node.x;
-      const dy = glyph.y - node.y;
-      const length = Math.hypot(dx, dy) || 1;
-      const unitX = dx / length;
-      const unitY = dy / length;
-
-      const defaultOutput = getGlyphDefaultOutputPoint(node, glyph, circleOffset);
-      const defaultInput = getGlyphDefaultInputPoint(node, glyph, circleOffset);
-      const defaultInputX = (glyph.type === 'node' || glyph.type === 'add' || glyph.type === 'subtract')
-        ? defaultInput.x - inputSpread * 0.55
-        : defaultInput.x;
-      const defaultInputY = defaultInput.y;
-      const defaultOutputX = defaultOutput.x;
-      const defaultOutputY = defaultOutput.y;
-
-      const isOuterDataGlyph = glyph.ring === 'outer' && (glyph.type === 'variable' || glyph.type === 'reference' || glyph.type === 'value');
-      const incomingCount = incomingCounts.get(glyph.guid) || 0;
-      const hasOutgoing = outputPoints.has(glyph.guid);
-
-      const inputPoint = incomingCount === 1
-        ? (inputPoints.get(glyph.guid) || { x: defaultInputX, y: defaultInputY })
-        : { x: defaultInputX, y: defaultInputY };
-
-      const outputPoint = outputPoints.get(glyph.guid) || { x: defaultOutputX, y: defaultOutputY };
-
-      if (isOuterDataGlyph) {
-        outputPoints.set(glyph.guid, outputPoint);
+      if (kind === 'normal') {
+        inputPoints.set(toPoint.ownerGuid, toPoint);
+      } else {
+        paramInputPoints.set(toPoint.ownerGuid, toPoint);
       }
+      outgoingLineEndSquares.set(fromGlyph.guid, { x: toPoint.x, y: toPoint.y });
+    }
+  };
 
-      if (!isOuterDataGlyph) {
+  execGlyphs.forEach((glyph) => {
+    const targetGuid = outputTargetBySource.get(glyph.guid);
+    const targetGlyph = targetGuid ? glyphByGuid.get(targetGuid) : null;
+    if (!targetGlyph) {
+      return;
+    }
+
+    drawConnectionLine(glyph, glyph.io?.output, targetGlyph.io?.input, 'normal');
+  });
+
+  node.outerGlyphs.forEach((glyph) => {
+    if (!glyph.nextGlyphGuid) {
+      return;
+    }
+
+    const targetGuid = glyph.nextGlyphGuid;
+    const targetGlyph = glyphByGuid.get(targetGuid);
+    if (!targetGlyph) {
+      return;
+    }
+
+    const targetPoint = targetGlyph.io?.param || targetGlyph.io?.input;
+    drawConnectionLine(glyph, glyph.io?.output, targetPoint, 'param');
+  });
+
+  ringGlyphs.forEach((glyph) => {
+      const isOuterDataGlyph = glyph.ring === 'outer'
+        && (glyph.type === 'variable' || glyph.type === 'reference' || glyph.type === 'value');
+
+      const isConnectedInput = Boolean(inputSourceByTarget.get(glyph.guid));
+      const isConnectedOutput = Boolean(outputTargetBySource.get(glyph.guid));
+      const isConnectedParam = Boolean(paramSourceByTarget.get(glyph.guid));
+
+      if (glyph.io?.input && !isOuterDataGlyph) {
         if (glyph.type === 'start') {
-          drawIoCircle(inputPoint.x, inputPoint.y, false, 'param-input');
-          paramInputPoints.set(glyph.guid, { x: inputPoint.x, y: inputPoint.y });
+          drawIoCircle(
+            glyph.io.input.x,
+            glyph.io.input.y,
+            false,
+            'param-input',
+            !nodeLineToolActive && isConnectedParam,
+            !nodeLineToolActive ? 0.7 : 1,
+          );
+          paramInputPoints.set(glyph.guid, glyph.io.input);
         } else {
-          drawIoCircle(inputPoint.x, inputPoint.y, true, 'input');
+          drawIoCircle(
+            glyph.io.input.x,
+            glyph.io.input.y,
+            true,
+            'input',
+            !nodeLineToolActive && isConnectedInput,
+            !nodeLineToolActive ? 0.7 : 1,
+          );
+          inputPoints.set(glyph.guid, glyph.io.input);
         }
       }
 
-      drawIoCircle(outputPoint.x, outputPoint.y, true, isOuterDataGlyph ? 'outer-output' : 'output');
+      if (glyph.io?.output) {
+        drawIoCircle(
+          glyph.io.output.x,
+          glyph.io.output.y,
+          true,
+          isOuterDataGlyph ? 'outer-output' : 'output',
+          !nodeLineToolActive && isConnectedOutput,
+          !nodeLineToolActive ? 0.7 : 1,
+        );
+        outputPoints.set(glyph.guid, glyph.io.output);
+      }
 
-      if (glyph.type === 'node' || glyph.type === 'add' || glyph.type === 'subtract') {
-        const paramPoint = paramInputPoints.get(glyph.guid) || getGlyphParamInputPoint(glyph);
-        const extraX = paramPoint.x;
-        const extraY = paramPoint.y;
-        drawIoCircle(extraX, extraY, false, 'param-input');
-        paramInputPoints.set(glyph.guid, { x: extraX, y: extraY });
+      if (glyph.io?.param) {
+        drawIoCircle(
+          glyph.io.param.x,
+          glyph.io.param.y,
+          false,
+          'param-input',
+          !nodeLineToolActive && isConnectedParam,
+          !nodeLineToolActive ? 0.7 : 1,
+        );
+        paramInputPoints.set(glyph.guid, glyph.io.param);
       }
     });
 
+  if (nodeLineToolActive) {
     node.__lineToolCache = {
       execGlyphGuids: execGlyphs.map((glyph) => glyph.guid),
-      outputSourceGuids: [...execGlyphs, ...node.outerGlyphs].map((glyph) => glyph.guid),
+      outputSourceGuids: ringGlyphs.filter((glyph) => glyph.io?.output).map((glyph) => glyph.guid),
       outputPoints,
       inputPoints,
       paramInputPoints,
-      incomingCounts,
       endSquares: outgoingLineEndSquares,
       circleOffset,
-      circleRadius: Math.max(node.lineWidth * 2.3, node.radius * 0.036),
+      circleRadius,
     };
   }
 
@@ -1220,7 +1274,7 @@ function drawGhostWire() {
   context.save();
   applyCameraTransform();
   context.globalAlpha *= 0.75;
-  context.strokeStyle = '#17120b';
+  context.strokeStyle = 'rgba(23, 18, 11, 0.45)';
   context.lineWidth = lineWidth;
   context.lineCap = 'round';
   context.beginPath();
@@ -1244,7 +1298,7 @@ function drawGhostWire() {
     const baseY = midY - unitY * (arrowLength / 2);
     const perpX = -unitY;
     const perpY = unitX;
-    context.fillStyle = '#17120b';
+    context.fillStyle = 'rgba(23, 18, 11, 0.45)';
     context.beginPath();
     context.moveTo(tipX, tipY);
     context.lineTo(baseX + perpX * arrowHalfWidth, baseY + perpY * arrowHalfWidth);
@@ -1255,7 +1309,7 @@ function drawGhostWire() {
 
   if (lineToolEnabled) {
     const squareSize = Math.max(node.lineWidth * 3.2, node.radius * 0.05);
-    context.fillStyle = '#17120b';
+    context.fillStyle = 'rgba(23, 18, 11, 0.45)';
     context.fillRect(end.x - squareSize / 2, end.y - squareSize / 2, squareSize, squareSize);
   }
 
@@ -1318,6 +1372,7 @@ function findDirectChildNodeHit(node, worldX, worldY, excludedGuid = null) {
 
 function removeGlyphFromNode(node, glyphGuid) {
   const innerIndex = node.glyphs.findIndex((glyph) => glyph.guid === glyphGuid);
+  debugSpellcircle('removeGlyphFromNode', { nodeGuid: node.guid, glyphGuid, innerIndex });
   if (innerIndex !== -1) {
     return node.glyphs.splice(innerIndex, 1)[0];
   }
@@ -1326,7 +1381,6 @@ function removeGlyphFromNode(node, glyphGuid) {
   if (outerIndex !== -1) {
     return node.outerGlyphs.splice(outerIndex, 1)[0];
   }
-
   return null;
 }
 
@@ -1645,7 +1699,9 @@ function findLineToolStartTargetInNode(node, worldX, worldY) {
           node,
           fromGuid,
           fromGlyph,
-          fromPoint: cache.outputPoints.get(fromGuid) || getGlyphDefaultOutputPoint(node, fromGlyph, cache.circleOffset),
+          fromPoint: cache.outputPoints.get(fromGuid)
+            || fromGlyph.io?.output
+            || getGlyphDefaultOutputPoint(node, fromGlyph, cache.circleOffset),
         };
       }
     }
@@ -1657,7 +1713,9 @@ function findLineToolStartTargetInNode(node, worldX, worldY) {
       continue;
     }
 
-    const outputPoint = cache.outputPoints.get(fromGuid) || getGlyphDefaultOutputPoint(node, fromGlyph, cache.circleOffset);
+    const outputPoint = cache.outputPoints.get(fromGuid)
+      || fromGlyph.io?.output
+      || getGlyphDefaultOutputPoint(node, fromGlyph, cache.circleOffset);
     if (Math.hypot(worldX - outputPoint.x, worldY - outputPoint.y) <= cache.circleRadius * 1.25) {
       return {
         node,
@@ -1777,26 +1835,10 @@ function finishWireDrag(clientX, clientY) {
       }
     }
   } else {
-    for (const guid of cache.execGlyphGuids) {
+    for (const [guid, inputPoint] of cache.inputPoints.entries()) {
       if (guid === node.startGlyph.guid) {
         continue;
       }
-
-      const glyph = getExecGlyphByGuid(node, guid);
-      if (!glyph) {
-        continue;
-      }
-
-      const incomingCount = cache.incomingCounts.get(guid) || 0;
-      const baseInputPoint = incomingCount === 1 && cache.inputPoints.get(guid)
-        ? cache.inputPoints.get(guid)
-        : getGlyphDefaultInputPoint(node, glyph, circleOffset);
-
-      const inputSpread = circleRadius * 2.4;
-      const inputPoint = (glyph.type === 'node' || glyph.type === 'add' || glyph.type === 'subtract')
-        && (incomingCount === 0 || !cache.inputPoints.get(guid))
-        ? { x: baseInputPoint.x - inputSpread * 0.55, y: baseInputPoint.y }
-        : baseInputPoint;
 
       if (Math.hypot(dropPoint.x - inputPoint.x, dropPoint.y - inputPoint.y) <= circleRadius * 1.05) {
         targetGuid = guid;
@@ -1919,6 +1961,12 @@ function closeVariableModal(commit) {
 
 function getAllVariableGlyphs(nodes = topLevelNodes, results = []) {
   nodes.forEach((node) => {
+    node.outerGlyphs.forEach((glyph) => {
+      if (glyph.type === 'variable') {
+        results.push(glyph);
+      }
+    });
+
     node.glyphs.forEach((glyph) => {
       if (glyph.type === 'variable') {
         results.push(glyph);
@@ -2241,17 +2289,28 @@ function serializeNode(node, nodes, glyphs) {
 }
 
 function serializeProgram() {
+  debugSpellcircle('serialize:start', {
+    topLevelNodeCount: topLevelNodes.length,
+  });
   layoutAllNodes();
   const nodes = {};
   const glyphs = {};
   topLevelNodes.forEach((node) => serializeNode(node, nodes, glyphs));
 
-  return {
+  const program = {
     version: 1,
     rootNodeGuids: topLevelNodes.map((node) => node.guid),
     nodes,
     glyphs,
   };
+
+  debugSpellcircle('serialize:complete', {
+    rootCount: program.rootNodeGuids.length,
+    nodeCount: Object.keys(nodes).length,
+    glyphCount: Object.keys(glyphs).length,
+  });
+
+  return program;
 }
 
 function resetProgramState() {
@@ -2264,48 +2323,84 @@ function resetProgramState() {
 }
 
 function hydrateGlyphFromSerialized(serialized) {
-  const glyph = {
+  let glyph = null;
+  const base = {
     guid: serialized.guid,
-    type: serialized.type,
     parentNodeGuid: serialized.parentNodeGuid,
-    nextGlyphGuid: serialized.nextGlyphGuid ?? null,
-    nextGlyphGuidIsAuto: false,
-    x: 0,
-    y: 0,
-    radius: CHILD_BASE_RADIUS,
-    lineWidth: BASE_NODE_LINE_WIDTH,
-    ring: serialized.ring || 'inner',
   };
 
-  if (serialized.name !== undefined) {
-    glyph.name = serialized.name;
+  switch (serialized.type) {
+    case 'start':
+      glyph = new StartGlyph(base);
+      break;
+    case 'variable':
+      glyph = new VariableGlyph({
+        ...base,
+        name: serialized.name ?? createVariableName(),
+        value: serialized.value ?? 'null',
+      });
+      break;
+    case 'value':
+      glyph = new ValueGlyph({
+        ...base,
+        name: serialized.name ?? 'Value',
+        inputIndex: serialized.inputIndex ?? 1,
+      });
+      break;
+    case 'reference':
+      glyph = new ReferenceGlyph({
+        ...base,
+        referenceGlyphGuid: serialized.referenceGlyphGuid ?? null,
+      });
+      break;
+    case 'add':
+      glyph = new AddGlyph({
+        ...base,
+        operand: serialized.operand ?? '1',
+      });
+      break;
+    case 'subtract':
+      glyph = new SubtractGlyph({
+        ...base,
+        operand: serialized.operand ?? '1',
+      });
+      break;
+    case 'output':
+      glyph = new OutputGlyph(base);
+      break;
+    default:
+      glyph = new Glyph({ guid: serialized.guid, type: serialized.type, parentNodeGuid: serialized.parentNodeGuid });
+      break;
   }
 
-  if (serialized.value !== undefined) {
-    glyph.value = serialized.value;
-  }
-
-  if (serialized.operand !== undefined) {
-    glyph.operand = serialized.operand;
-  }
-
-  if (serialized.inputIndex !== undefined) {
-    glyph.inputIndex = serialized.inputIndex;
-  }
-
-  if (serialized.referenceGlyphGuid !== undefined) {
-    glyph.referenceGlyphGuid = serialized.referenceGlyphGuid;
-  }
+  glyph.nextGlyphGuid = serialized.nextGlyphGuid ?? null;
+  glyph.nextGlyphGuidIsAuto = false;
+  glyph.x = 0;
+  glyph.y = 0;
+  glyph.radius = CHILD_BASE_RADIUS;
+  glyph.lineWidth = BASE_NODE_LINE_WIDTH;
+  glyph.ring = serialized.ring || 'inner';
 
   return glyph;
 }
 
 function deserializeProgram(program) {
+  debugSpellcircle('deserialize:start', {
+    hasProgram: Boolean(program),
+    rootCount: Array.isArray(program?.rootNodeGuids) ? program.rootNodeGuids.length : null,
+  });
+
   if (!program || typeof program !== 'object') {
+    debugSpellcircle('deserialize:invalid-program');
     return false;
   }
 
   if (!Array.isArray(program.rootNodeGuids) || !program.nodes || !program.glyphs) {
+    debugSpellcircle('deserialize:invalid-shape', {
+      hasRoots: Array.isArray(program.rootNodeGuids),
+      hasNodes: Boolean(program.nodes),
+      hasGlyphs: Boolean(program.glyphs),
+    });
     return false;
   }
 
@@ -2319,23 +2414,22 @@ function deserializeProgram(program) {
     }
 
     const radius = Number(serializedNode.radius) || ROOT_NODE_RADIUS;
-    const node = {
+    const node = new NodeGlyph({
       guid: serializedNode.guid,
-      type: 'node',
       parentNodeGuid: serializedNode.parentNodeGuid ?? null,
-      nextGlyphGuid: serializedNode.nextGlyphGuid ?? null,
-      x: Number(serializedNode.x) || 0,
-      y: Number(serializedNode.y) || 0,
-      radius,
-      lineWidth: getStrokeWidthForRadius(radius),
-      glyphs: [],
-      outerGlyphs: [],
-      startGlyph: null,
-      layout: null,
       isRoot: Boolean(serializedNode.isRoot),
-    };
+    });
+    node.nextGlyphGuid = serializedNode.nextGlyphGuid ?? null;
+    node.x = Number(serializedNode.x) || 0;
+    node.y = Number(serializedNode.y) || 0;
+    node.radius = radius;
+    node.lineWidth = getStrokeWidthForRadius(radius);
 
     nodeByGuid.set(node.guid, node);
+  });
+
+  debugSpellcircle('deserialize:nodes-hydrated', {
+    nodeCount: nodeByGuid.size,
   });
 
   const hydratedGlyphByGuid = new Map();
@@ -2406,6 +2500,7 @@ function deserializeProgram(program) {
     .filter(Boolean);
 
   if (roots.length === 0) {
+    debugSpellcircle('deserialize:no-roots');
     return false;
   }
 
@@ -2428,6 +2523,10 @@ function deserializeProgram(program) {
 
   layoutAllNodes();
   drawScene();
+  debugSpellcircle('deserialize:complete', {
+    rootCount: roots.length,
+    focusedNodeGuid: focusedNode?.guid ?? null,
+  });
   return true;
 }
 
@@ -2570,44 +2669,95 @@ playProgramButton.addEventListener('click', () => {
 });
 
 saveProgramButton?.addEventListener('click', async () => {
+  debugSpellcircle('save:click');
   const program = serializeProgram();
   const api = window.SpellcircleFile;
   if (!api?.save) {
     console.warn('Save is unavailable: preload API missing.');
+    debugSpellcircle('save:missing-api');
+    window.alert('Save is unavailable in this build.');
     return;
   }
 
   try {
-    await api.save(program);
-  } catch (error) {
-    console.error('Save failed:', error);
-  }
-});
-
-loadProgramButton?.addEventListener('click', async () => {
-  const api = window.SpellcircleFile;
-  if (!api?.load) {
-    console.warn('Load is unavailable: preload API missing.');
-    return;
-  }
-
-  try {
-    const result = await api.load();
+    debugSpellcircle('save:calling-api');
+    const result = await api.save(program);
+    debugSpellcircle('save:api-result', {
+      canceled: Boolean(result?.canceled),
+      hasError: Boolean(result?.error),
+      filePath: result?.filePath ?? null,
+    });
     if (!result || result.canceled) {
       return;
     }
 
+    if (result.error) {
+      window.alert(`Save failed: ${result.error}`);
+      return;
+    }
+
+    if (result.filePath) {
+      appendMessageLog(`Saved script: ${result.filePath}`);
+    }
+  } catch (error) {
+    console.error('Save failed:', error);
+    debugSpellcircle('save:exception', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    window.alert(`Save failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+});
+
+loadProgramButton?.addEventListener('click', async () => {
+  debugSpellcircle('load:click');
+  const api = window.SpellcircleFile;
+  if (!api?.load) {
+    console.warn('Load is unavailable: preload API missing.');
+    debugSpellcircle('load:missing-api');
+    window.alert('Load is unavailable in this build.');
+    return;
+  }
+
+  try {
+    debugSpellcircle('load:calling-api');
+    const result = await api.load();
+    debugSpellcircle('load:api-result', {
+      canceled: Boolean(result?.canceled),
+      hasError: Boolean(result?.error),
+      filePath: result?.filePath ?? null,
+      hasProgram: Boolean(result?.program),
+    });
+    if (!result || result.canceled) {
+      return;
+    }
+
+    if (result.error) {
+      window.alert(`Load failed: ${result.error}`);
+      return;
+    }
+
     const ok = window.confirm('This will delete the current script and load a new one. Continue?');
+    debugSpellcircle('load:confirm-result', { ok });
     if (!ok) {
       return;
     }
 
     const success = deserializeProgram(result.program);
+    debugSpellcircle('load:deserialize-result', { success });
     if (!success) {
       window.alert('Unable to load script: invalid or unsupported file.');
+      return;
+    }
+
+    if (result.filePath) {
+      appendMessageLog(`Loaded script: ${result.filePath}`);
     }
   } catch (error) {
     console.error('Load failed:', error);
+    debugSpellcircle('load:exception', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    window.alert(`Load failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 });
 
@@ -2910,6 +3060,7 @@ dropZone.addEventListener('drop', (event) => {
 
 window.addEventListener('resize', resizeCanvas);
 window.addEventListener('load', () => {
+  debugSpellcircle('window:load');
   resizeCanvas();
 
   if (topLevelNodes.length === 0) {
@@ -2922,6 +3073,19 @@ window.addEventListener('load', () => {
       const nextCollapsed = messageLog?.dataset?.collapsed !== 'true';
       setMessageLogCollapsed(nextCollapsed);
     });
+  }
+
+  if (spellcircleDebugEnabled && window.SpellcircleFile?.onDebug) {
+    window.SpellcircleFile.onDebug((payload) => {
+      console.log('[Spellcircle Debug]', payload);
+      const details = payload?.details && Object.keys(payload.details).length > 0
+        ? ` ${JSON.stringify(payload.details)}`
+        : '';
+      appendMessageLog(`[Spellcircle Debug] ${payload?.source ?? 'unknown'}:${payload?.step ?? 'unknown'}${details}`);
+    });
+    debugSpellcircle('debug-listener:registered');
+  } else if (spellcircleDebugEnabled) {
+    debugSpellcircle('debug-listener:missing');
   }
 
   // Ensure tray toggle shows correct icon/label on startup
