@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MagiScript</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <button class="tray-toggle-float" id="trayToggle" type="button" aria-label="Toggle tray"></button>
+      <button class="play-button" id="playProgram" type="button" aria-label="Execute program">
+        Play
+      </button>
+      <button class="save-button" id="saveProgram" type="button" aria-label="Save script">
+        Save
+      </button>
+      <button class="load-button" id="loadProgram" type="button" aria-label="Load script">
+        Load
+      </button>
+      <button class="recenter-button" id="recenterCanvas" type="button" aria-label="Recenter canvas">
+        Recenter
+      </button>
+      <button class="line-tool-button" id="lineToolToggle" type="button" aria-pressed="false">
+        Line Tool
+      </button>
+
+      <aside class="tray" data-collapsed="false">
+        <div class="tray__header">
+          <div>
+            <h1>Glyphs</h1>
+          </div>
+        </div>
+
+        <div class="object-grid">
+          <button
+            class="object-card"
+            id="nodeObject"
+            type="button"
+            draggable="true"
+            data-object-type="node"
+            data-name="Node"
+            data-description="A hollow circle mark used to place a node on the canvas."
+            aria-label="Node glyph"
+          >
+            <span class="object-card__preview" aria-hidden="true">
+              <span class="tray-label">NODE</span>
+            </span>
+          </button>
+          <button
+            class="object-card"
+            type="button"
+            draggable="true"
+            data-object-type="variable"
+            data-name="Variable"
+            data-description="Stores a string value and replaces the current runtime value when executed."
+            aria-label="Variable glyph"
+          >
+            <span class="object-card__preview" aria-hidden="true">
+              <span class="tray-label">VAR</span>
+            </span>
+          </button>
+          <button
+            class="object-card"
+            type="button"
+            draggable="true"
+            data-object-type="reference"
+            data-name="Reference"
+            data-description="References a Variable glyph and loads that variable's current value."
+            aria-label="Reference glyph"
+          >
+            <span class="object-card__preview" aria-hidden="true">
+              <span class="tray-label">REF</span>
+            </span>
+          </button>
+          <button
+            class="object-card"
+            type="button"
+            draggable="true"
+            data-object-type="value"
+            data-name="Value"
+            data-description="Selects which input value this Node reads (Direct or Param)."
+            aria-label="Value glyph"
+          >
+            <span class="object-card__preview" aria-hidden="true">
+              <span class="tray-label">IN</span>
+            </span>
+          </button>
+          <button
+            class="object-card"
+            type="button"
+            draggable="true"
+            data-object-type="add"
+            data-name="Add"
+            data-description="Adds its operand to the current runtime value."
+            aria-label="Add glyph"
+          >
+            <span class="object-card__preview" aria-hidden="true">
+              <span class="tray-label">+</span>
+            </span>
+          </button>
+          <button
+            class="object-card"
+            type="button"
+            draggable="true"
+            data-object-type="subtract"
+            data-name="Subtract"
+            data-description="Subtracts its operand from the current runtime value."
+            aria-label="Subtract glyph"
+          >
+            <span class="object-card__preview" aria-hidden="true">
+              <span class="tray-label">-</span>
+            </span>
+          </button>
+          <button
+            class="object-card"
+            type="button"
+            draggable="true"
+            data-object-type="output"
+            data-name="Output"
+            data-description="Prints the current runtime value to the console."
+            aria-label="Output glyph"
+          >
+            <span class="object-card__preview" aria-hidden="true">
+              <span class="tray-label">PRINT</span>
+            </span>
+          </button>
+        </div>
+      </aside>
+
+      <main class="stage-wrap">
+        <div class="canvas-frame" id="dropZone">
+          <canvas id="sceneCanvas" aria-label="Canvas for spawned objects"></canvas>
+        </div>
+      </main>
+
+      <section class="message-log" id="messageLog" data-collapsed="true" aria-label="Message log">
+        <header class="message-log__header">
+          <span class="message-log__title">Message Log</span>
+          <button
+            class="message-log__toggle"
+            id="messageLogToggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="messageLogBody"
+          >
+            Expand
+          </button>
+        </header>
+        <div class="message-log__body" id="messageLogBody" role="log" aria-live="polite"></div>
+      </section>
+    </div>
+
+    <div class="hover-tooltip" id="hoverTooltip" aria-hidden="true"></div>
+
+    <div class="modal-backdrop" id="variableModalBackdrop" aria-hidden="true">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="variableModalTitle">
+        <h2 id="variableModalTitle">Edit Variable</h2>
+        <label class="modal-field">
+          <span>Name</span>
+          <input id="variableModalNameInput" class="modal-input" type="text" autocomplete="off" />
+        </label>
+        <label class="modal-field">
+          <span>Value</span>
+        <input id="variableModalInput" class="modal-input" type="text" autocomplete="off" />
+        </label>
+        <div class="modal-actions">
+          <button id="variableModalCancel" type="button">Cancel</button>
+          <button id="variableModalAccept" type="button">Accept</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="referenceModalBackdrop" aria-hidden="true">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="referenceModalTitle">
+        <h2 id="referenceModalTitle">Edit Reference</h2>
+        <label class="modal-field">
+          <span>Variable</span>
+          <select id="referenceModalSelect" class="modal-input"></select>
+        </label>
+        <div class="modal-actions">
+          <button id="referenceModalCancel" type="button">Cancel</button>
+          <button id="referenceModalAccept" type="button">Accept</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="deleteModalBackdrop" aria-hidden="true">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+        <h2 id="deleteModalTitle">Delete Node?</h2>
+        <p class="modal-copy">Delete this node and all of its child glyphs?</p>
+        <div class="modal-actions">
+          <button id="deleteModalCancel" type="button">Cancel</button>
+          <button id="deleteModalConfirm" type="button">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>

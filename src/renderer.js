@@ -1,0 +1,2934 @@
+const appShell = document.querySelector('.app-shell');
+const trayToggle = document.getElementById('trayToggle');
+const recenterCanvasButton = document.getElementById('recenterCanvas');
+const playProgramButton = document.getElementById('playProgram');
+const saveProgramButton = document.getElementById('saveProgram');
+const loadProgramButton = document.getElementById('loadProgram');
+const lineToolToggle = document.getElementById('lineToolToggle');
+const glyphCards = document.querySelectorAll('.object-card');
+const hoverTooltip = document.getElementById('hoverTooltip');
+const messageLog = document.getElementById('messageLog');
+const messageLogBody = document.getElementById('messageLogBody');
+const messageLogToggle = document.getElementById('messageLogToggle');
+const variableModalBackdrop = document.getElementById('variableModalBackdrop');
+const variableModalNameInput = document.getElementById('variableModalNameInput');
+const variableModalInput = document.getElementById('variableModalInput');
+const variableModalAccept = document.getElementById('variableModalAccept');
+const variableModalCancel = document.getElementById('variableModalCancel');
+const referenceModalBackdrop = document.getElementById('referenceModalBackdrop');
+const referenceModalSelect = document.getElementById('referenceModalSelect');
+const referenceModalAccept = document.getElementById('referenceModalAccept');
+const referenceModalCancel = document.getElementById('referenceModalCancel');
+const deleteModalBackdrop = document.getElementById('deleteModalBackdrop');
+const deleteModalConfirm = document.getElementById('deleteModalConfirm');
+const deleteModalCancel = document.getElementById('deleteModalCancel');
+const dropZone = document.getElementById('dropZone');
+const canvas = document.getElementById('sceneCanvas');
+const context = canvas.getContext('2d');
+
+const topLevelNodes = [];
+let focusedNode = null;
+let activeVariableGlyph = null;
+let activeReferenceGlyph = null;
+let activeValueGlyph = null;
+let activeValueDropdown = null;
+let hoverCanvasGlyphGuid = null;
+let pendingDelete = null;
+let variableCount = 0;
+let lineToolEnabled = false;
+const NODE_LINE_TOOL_MIN_SCREEN_FRACTION = 0.05;
+
+const wireDragState = {
+  active: false,
+  pointerId: null,
+  node: null,
+  fromGuid: null,
+  fromPoint: null,
+  toWorld: null,
+};
+
+const camera = {
+  x: 0,
+  y: 0,
+  zoom: 1,
+};
+
+const panState = {
+  active: false,
+  moved: false,
+  pointerId: null,
+  lastX: 0,
+  lastY: 0,
+};
+
+const dragState = {
+  active: false,
+  moved: false,
+  pointerId: null,
+  glyph: null,
+  sourceNode: null,
+  worldX: 0,
+  worldY: 0,
+};
+
+const GRID_MINOR_STEP = 24;
+const GRID_MAJOR_STEP = 96;
+const MIN_ZOOM = 0.35;
+
+const ROOT_NODE_RADIUS = 192;
+const CHILD_BASE_RADIUS = 33.6;
+const MIN_CHILD_RADIUS = 12;
+const BASE_NODE_LINE_WIDTH = 3;
+const GROUP_CHILD_BORDER_GAP = 18;
+const GROUP_CHILD_GAP = 8;
+const GROUP_LINE_GAP = 10;
+const GROUP_MIN_LINE_LENGTH = 16;
+const GROUP_ARROW_GAP = 12;
+const CONNECTOR_BASE_RADIUS = CHILD_BASE_RADIUS * 2;
+const START_ANGLE = -Math.PI / 2;
+const CHILD_RADIUS_RATIO = CHILD_BASE_RADIUS / ROOT_NODE_RADIUS;
+const MIN_CHILD_RADIUS_RATIO = MIN_CHILD_RADIUS / ROOT_NODE_RADIUS;
+const NODE_LINE_WIDTH_RATIO = BASE_NODE_LINE_WIDTH / ROOT_NODE_RADIUS;
+const GROUP_CHILD_BORDER_GAP_RATIO = GROUP_CHILD_BORDER_GAP / ROOT_NODE_RADIUS;
+const GROUP_CHILD_GAP_RATIO = GROUP_CHILD_GAP / ROOT_NODE_RADIUS;
+const GROUP_LINE_GAP_RATIO = GROUP_LINE_GAP / ROOT_NODE_RADIUS;
+const GROUP_MIN_LINE_LENGTH_RATIO = GROUP_MIN_LINE_LENGTH / ROOT_NODE_RADIUS;
+const GROUP_ARROW_GAP_RATIO = GROUP_ARROW_GAP / ROOT_NODE_RADIUS;
+const CONNECTOR_RADIUS_RATIO = CONNECTOR_BASE_RADIUS / ROOT_NODE_RADIUS;
+const SYSTEM_VALUE_DEFAULT = 'null';
+
+function createGuid() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `guid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function createVariableName() {
+  variableCount += 1;
+  return `variable_${variableCount}`;
+}
+
+function getGlyphShortLabel(value, fallback) {
+  const normalized = String(value || '').trim();
+  if (normalized === '') {
+    return fallback;
+  }
+
+  return normalized.slice(0, 4).toUpperCase();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function showTooltip(title, description, clientX, clientY) {
+  const normalizedDescription = String(description || '').trim();
+  hoverTooltip.innerHTML = normalizedDescription
+    ? `
+    <span class="hover-tooltip__title">${escapeHtml(title)}</span>
+    <span class="hover-tooltip__description">${escapeHtml(normalizedDescription)}</span>
+  `
+    : `
+    <span class="hover-tooltip__title">${escapeHtml(title)}</span>
+  `;
+
+  moveTooltip(clientX, clientY);
+  hoverTooltip.classList.add('is-visible');
+  hoverTooltip.setAttribute('aria-hidden', 'false');
+}
+
+function hideTooltip() {
+  hoverTooltip.classList.remove('is-visible');
+  hoverTooltip.setAttribute('aria-hidden', 'true');
+  hoverCanvasGlyphGuid = null;
+}
+
+function moveTooltip(clientX, clientY) {
+  const offset = 14;
+  const tooltipWidth = hoverTooltip.offsetWidth || 220;
+  const tooltipHeight = hoverTooltip.offsetHeight || 60;
+  const maxLeft = window.innerWidth - tooltipWidth - 12;
+  const maxTop = window.innerHeight - tooltipHeight - 12;
+  const left = Math.min(clientX + offset, maxLeft);
+  const top = Math.min(clientY + offset, maxTop);
+
+  hoverTooltip.style.left = `${Math.max(12, left)}px`;
+  hoverTooltip.style.top = `${Math.max(12, top)}px`;
+}
+
+function setMessageLogCollapsed(collapsed) {
+  if (!messageLog || !messageLogToggle) {
+    return;
+  }
+
+  messageLog.dataset.collapsed = collapsed ? 'true' : 'false';
+  appShell.dataset.logCollapsed = collapsed ? 'true' : 'false';
+  messageLogToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  messageLogToggle.textContent = collapsed ? 'Expand' : 'Collapse';
+}
+
+function appendMessageLog(value) {
+  if (!messageLogBody) {
+    return;
+  }
+
+  const line = document.createElement('div');
+  line.className = 'message-log__line';
+  line.textContent = value === null || value === undefined ? 'null' : String(value);
+  messageLogBody.append(line);
+
+  const maxLines = 300;
+  while (messageLogBody.childElementCount > maxLines) {
+    messageLogBody.firstElementChild?.remove();
+  }
+
+  messageLogBody.scrollTop = messageLogBody.scrollHeight;
+}
+
+function getViewportSize() {
+  return {
+    width: canvas.clientWidth,
+    height: canvas.clientHeight,
+  };
+}
+
+function shouldApplyLineToolToNode(node) {
+  const { width, height } = getViewportSize();
+  const minDimension = Math.max(1, Math.min(width, height));
+  const diameterPixels = node.radius * 2 * camera.zoom;
+  return (diameterPixels / minDimension) >= NODE_LINE_TOOL_MIN_SCREEN_FRACTION;
+}
+
+function screenToWorld(screenX, screenY) {
+  const { width, height } = getViewportSize();
+
+  return {
+    x: (screenX - width / 2) / camera.zoom + camera.x,
+    y: (screenY - height / 2) / camera.zoom + camera.y,
+  };
+}
+
+function applyCameraTransform() {
+  const { width, height } = getViewportSize();
+  context.translate(width / 2, height / 2);
+  context.scale(camera.zoom, camera.zoom);
+  context.translate(-camera.x, -camera.y);
+}
+
+function getStrokeWidthForRadius(radius) {
+  return radius * NODE_LINE_WIDTH_RATIO;
+}
+
+function getConnectorRadius(node) {
+  return node.radius * CONNECTOR_RADIUS_RATIO;
+}
+
+function getFocusZoomForNode(node) {
+  return Math.max(MIN_ZOOM, ROOT_NODE_RADIUS / node.radius);
+}
+
+function getScaledValue(node, ratio) {
+  return node.radius * ratio;
+}
+
+function getNodeShadowBlur(node) {
+  return (8 * node.radius) / ROOT_NODE_RADIUS;
+}
+
+function createStartGlyph(parentNodeGuid) {
+  return {
+    guid: createGuid(),
+    type: 'start',
+    parentNodeGuid,
+    nextGlyphGuid: null,
+    nextGlyphGuidIsAuto: true,
+    x: 0,
+    y: 0,
+    radius: 0,
+    lineWidth: BASE_NODE_LINE_WIDTH,
+  };
+}
+
+function createGlyph(type, parentNodeGuid) {
+  const glyph = {
+    guid: createGuid(),
+    type,
+    parentNodeGuid,
+    nextGlyphGuid: null,
+    nextGlyphGuidIsAuto: true,
+    x: 0,
+    y: 0,
+    radius: CHILD_BASE_RADIUS,
+    lineWidth: BASE_NODE_LINE_WIDTH,
+    ring: 'inner',
+  };
+
+  if (type === 'variable') {
+    glyph.value = 'null';
+    glyph.name = createVariableName();
+  }
+
+  if (type === 'value') {
+    glyph.name = 'Value';
+    glyph.inputIndex = 1;
+  }
+
+  if (type === 'add' || type === 'subtract') {
+    glyph.operand = '1';
+  }
+
+  if (type === 'reference') {
+    glyph.referenceGlyphGuid = null;
+  }
+
+  return glyph;
+}
+
+function createNode(x, y, radius, parentNodeGuid = null, options = {}) {
+  const node = {
+    guid: createGuid(),
+    type: 'node',
+    parentNodeGuid,
+    nextGlyphGuid: null,
+    x,
+    y,
+    radius,
+    lineWidth: getStrokeWidthForRadius(radius),
+    glyphs: [],
+    outerGlyphs: [],
+    startGlyph: null,
+    layout: null,
+    isRoot: Boolean(options.isRoot),
+  };
+
+  node.startGlyph = createStartGlyph(node.guid);
+
+  if (node.isRoot) {
+     const defaultVariable = createGlyph('variable', node.guid);
+     defaultVariable.ring = 'outer';
+      defaultVariable.name = 'IN';
+      connectOutgoing(defaultVariable, node.startGlyph.guid);
+     node.outerGlyphs.push(defaultVariable);
+  } else {
+    const defaultValue = createGlyph('value', node.guid);
+    defaultValue.ring = 'outer';
+    connectOutgoing(defaultValue, node.startGlyph.guid);
+    node.outerGlyphs.push(defaultValue);
+  }
+
+  updateNodeOrdering(node);
+  return node;
+}
+
+function isNode(item) {
+  return item.type === 'node';
+}
+
+function getExecutableSequence(node) {
+  return [node.startGlyph, ...node.glyphs];
+}
+
+function updateNodeOrdering(node) {
+  const sequence = getExecutableSequence(node);
+
+  sequence.forEach((item, index) => {
+    item.parentNodeGuid = node.guid;
+    const defaultNext = sequence[index + 1]?.guid ?? null;
+    if (item.nextGlyphGuidIsAuto) {
+      item.nextGlyphGuid = defaultNext;
+    }
+  });
+
+  node.glyphs.forEach((glyph) => {
+    if (isNode(glyph)) {
+      updateNodeOrdering(glyph);
+    }
+  });
+}
+
+function getChildRadiusForNode(node, slotCount) {
+  if (slotCount <= 1) {
+    return getScaledValue(node, CHILD_RADIUS_RATIO);
+  }
+
+  const preferredRadius = getScaledValue(node, CHILD_RADIUS_RATIO);
+  const minimumRadius = getScaledValue(node, MIN_CHILD_RADIUS_RATIO);
+  const borderGap = getScaledValue(node, GROUP_CHILD_BORDER_GAP_RATIO);
+  const childGap = getScaledValue(node, GROUP_CHILD_GAP_RATIO);
+  const lineGap = getScaledValue(node, GROUP_LINE_GAP_RATIO);
+  const minimumLineLength = getScaledValue(node, GROUP_MIN_LINE_LENGTH_RATIO);
+  let childRadius = preferredRadius;
+
+  for (let iteration = 0; iteration < 4; iteration += 1) {
+    const orbitRadius = Math.max(childRadius + borderGap, node.radius - childRadius - borderGap);
+    const chordLength = 2 * orbitRadius * Math.sin(Math.PI / slotCount);
+    const childLineWidth = getStrokeWidthForRadius(childRadius);
+    const reservedSpace = childGap + minimumLineLength + (lineGap * 2) + (childLineWidth * 2);
+    const maxRadiusFromSpacing = (chordLength - reservedSpace) / 2;
+
+    childRadius = Math.max(minimumRadius, Math.min(preferredRadius, maxRadiusFromSpacing));
+  }
+
+  return childRadius;
+}
+
+function layoutNode(node) {
+  updateNodeOrdering(node);
+
+  if (node.glyphs.length === 0 && node.outerGlyphs.length === 0) {
+    node.layout = null;
+    return;
+  }
+
+  const maxGlyphCount = Math.max(node.glyphs.length, node.outerGlyphs.length);
+  const slotCount = maxGlyphCount + 1;
+  const glyphRadius = getChildRadiusForNode(node, slotCount);
+  const borderGap = getScaledValue(node, GROUP_CHILD_BORDER_GAP_RATIO);
+  const orbitRadius = Math.max(glyphRadius + borderGap, node.radius - glyphRadius - borderGap);
+  const lineWidth = getStrokeWidthForRadius(glyphRadius);
+  const innerOffsetFromBorder = node.radius - orbitRadius;
+  const outerOrbitRadius = node.radius + innerOffsetFromBorder;
+
+  node.layout = {
+    orbitRadius,
+    outerOrbitRadius,
+    glyphRadius,
+  };
+
+  node.startGlyph.x = node.x;
+  node.startGlyph.y = node.y - orbitRadius;
+  node.startGlyph.radius = glyphRadius;
+  node.startGlyph.lineWidth = lineWidth;
+
+  node.glyphs.forEach((glyph, index) => {
+    const angle = START_ANGLE + ((index + 1) * Math.PI * 2) / (node.glyphs.length + 1);
+
+    glyph.x = node.x + orbitRadius * Math.cos(angle);
+    glyph.y = node.y + orbitRadius * Math.sin(angle);
+    glyph.radius = glyphRadius;
+    glyph.lineWidth = lineWidth;
+    glyph.ring = 'inner';
+
+    if (isNode(glyph)) {
+      layoutNode(glyph);
+    }
+  });
+
+  const innerGlyphByGuid = new Map([node.startGlyph, ...node.glyphs].map((glyph) => [glyph.guid, glyph]));
+  const pinnedGroups = new Map();
+  const unpinnedOuterGlyphs = [];
+
+  node.outerGlyphs.forEach((glyph) => {
+    const targetGuid = glyph.nextGlyphGuid;
+    const target = targetGuid ? innerGlyphByGuid.get(targetGuid) : null;
+    if (target) {
+      const group = pinnedGroups.get(targetGuid) || [];
+      group.push(glyph);
+      pinnedGroups.set(targetGuid, group);
+    } else {
+      unpinnedOuterGlyphs.push(glyph);
+    }
+  });
+
+  const getAngleToTarget = (target) => Math.atan2(target.y - node.y, target.x - node.x);
+  const clampAngle = (value) => (value + Math.PI * 2) % (Math.PI * 2);
+  const angleDistance = (a, b) => {
+    const diff = Math.abs(clampAngle(a) - clampAngle(b));
+    return Math.min(diff, Math.PI * 2 - diff);
+  };
+
+  const pinnedAngles = [];
+  const baseSpread = Math.min(0.42, (glyphRadius * 2.6) / outerOrbitRadius);
+
+  for (const [targetGuid, group] of pinnedGroups.entries()) {
+    const target = innerGlyphByGuid.get(targetGuid);
+    if (!target) {
+      continue;
+    }
+
+    const baseAngle = getAngleToTarget(target);
+    const centerIndex = (group.length - 1) / 2;
+    group.forEach((glyph, index) => {
+      const angle = baseAngle + (index - centerIndex) * baseSpread;
+      pinnedAngles.push(angle);
+
+      glyph.x = node.x + outerOrbitRadius * Math.cos(angle);
+      glyph.y = node.y + outerOrbitRadius * Math.sin(angle);
+      glyph.radius = glyphRadius;
+      glyph.lineWidth = lineWidth;
+      glyph.ring = 'outer';
+    });
+  }
+
+  const unpinnedCount = unpinnedOuterGlyphs.length;
+  unpinnedOuterGlyphs.forEach((glyph, index) => {
+    let angle = unpinnedCount <= 1
+      ? START_ANGLE
+      : START_ANGLE + (index * Math.PI * 2) / unpinnedCount;
+
+    for (let tries = 0; tries < 12; tries += 1) {
+      const isTooClose = pinnedAngles.some((pinnedAngle) => angleDistance(angle, pinnedAngle) < baseSpread * 0.9);
+      if (!isTooClose) {
+        break;
+      }
+
+      angle += baseSpread;
+    }
+
+    glyph.x = node.x + outerOrbitRadius * Math.cos(angle);
+    glyph.y = node.y + outerOrbitRadius * Math.sin(angle);
+    glyph.radius = glyphRadius;
+    glyph.lineWidth = lineWidth;
+    glyph.ring = 'outer';
+  });
+}
+
+function layoutAllNodes() {
+  topLevelNodes.forEach((node) => layoutNode(node));
+}
+
+function drawBackground(width, height) {
+  const backgroundGradient = context.createLinearGradient(0, 0, 0, height);
+  backgroundGradient.addColorStop(0, 'rgba(240, 224, 187, 0.98)');
+  backgroundGradient.addColorStop(1, 'rgba(214, 189, 139, 0.98)');
+  context.fillStyle = backgroundGradient;
+  context.fillRect(0, 0, width, height);
+}
+
+function drawGrid(width, height) {
+  const topLeft = screenToWorld(0, 0);
+  const bottomRight = screenToWorld(width, height);
+
+  context.save();
+  applyCameraTransform();
+  context.lineCap = 'butt';
+
+  const drawGridLines = (step, strokeStyle, lineWidth) => {
+    const startX = Math.floor(topLeft.x / step) * step;
+    const endX = Math.ceil(bottomRight.x / step) * step;
+    const startY = Math.floor(topLeft.y / step) * step;
+    const endY = Math.ceil(bottomRight.y / step) * step;
+
+    context.beginPath();
+    context.strokeStyle = strokeStyle;
+    context.lineWidth = lineWidth / camera.zoom;
+
+    for (let x = startX; x <= endX; x += step) {
+      context.moveTo(x, startY);
+      context.lineTo(x, endY);
+    }
+
+    for (let y = startY; y <= endY; y += step) {
+      context.moveTo(startX, y);
+      context.lineTo(endX, y);
+    }
+
+    context.stroke();
+  };
+
+  drawGridLines(GRID_MINOR_STEP, 'rgba(23, 18, 11, 0.08)', 1);
+  drawGridLines(GRID_MAJOR_STEP, 'rgba(23, 18, 11, 0.16)', 1.2);
+  context.restore();
+}
+
+function drawNodeRing(node) {
+  const isDraggedGlyph = dragState.active && dragState.glyph?.guid === node.guid;
+  const isCurrentNode = dragState.active && dragState.sourceNode?.guid === node.guid;
+  const isCurrentNodeChild = dragState.active && node.parentNodeGuid === dragState.sourceNode?.guid;
+
+  context.save();
+  applyCameraTransform();
+  context.beginPath();
+  context.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+  context.lineWidth = isCurrentNodeChild && dragState.sourceNode ? dragState.sourceNode.lineWidth : node.lineWidth;
+  context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
+  context.strokeStyle = isCurrentNode ? '#264f99' : isCurrentNodeChild ? '#2f7d32' : '#17120b';
+  context.shadowColor = 'rgba(23, 18, 11, 0.12)';
+  context.shadowBlur = getNodeShadowBlur(node);
+  context.stroke();
+  context.restore();
+}
+
+function drawConnector(node) {
+  const radius = getConnectorRadius(node);
+  const halfSquare = radius * 0.72;
+  const isDraggedGlyph = dragState.active && dragState.glyph?.guid === node.guid;
+  const isCurrentNode = dragState.active && dragState.sourceNode?.guid === node.guid;
+  const connectorAlpha = dragState.active ? 1 : 0.45;
+
+  context.save();
+  applyCameraTransform();
+  context.lineWidth = node.lineWidth * 0.9;
+  context.globalAlpha *= (isDraggedGlyph ? 0.35 : 1) * connectorAlpha;
+  context.strokeStyle = isCurrentNode ? '#a12c2c' : '#17120b';
+  context.shadowColor = 'rgba(23, 18, 11, 0.12)';
+  context.shadowBlur = getNodeShadowBlur(node);
+
+  context.strokeRect(node.x - halfSquare, node.y - halfSquare, halfSquare * 2, halfSquare * 2);
+  context.beginPath();
+  context.moveTo(node.x, node.y - radius);
+  context.lineTo(node.x + radius, node.y);
+  context.lineTo(node.x, node.y + radius);
+  context.lineTo(node.x - radius, node.y);
+  context.closePath();
+  context.stroke();
+  context.restore();
+}
+
+function drawStartGlyph(startGlyph) {
+  const isDraggedGlyph = dragState.active && dragState.glyph?.guid === startGlyph.guid;
+
+  context.save();
+  applyCameraTransform();
+  context.beginPath();
+  context.moveTo(startGlyph.x, startGlyph.y - startGlyph.radius);
+  context.lineTo(startGlyph.x + startGlyph.radius, startGlyph.y);
+  context.lineTo(startGlyph.x, startGlyph.y + startGlyph.radius);
+  context.lineTo(startGlyph.x - startGlyph.radius, startGlyph.y);
+  context.closePath();
+  context.lineWidth = startGlyph.lineWidth;
+  context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
+  context.strokeStyle = '#17120b';
+  context.shadowColor = 'rgba(23, 18, 11, 0.12)';
+  context.shadowBlur = 8 * startGlyph.radius / CHILD_BASE_RADIUS;
+  context.stroke();
+  context.shadowBlur = 0;
+  context.fillStyle = '#17120b';
+  context.font = `${startGlyph.radius * 0.95}px Georgia`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText('S', startGlyph.x, startGlyph.y + startGlyph.radius * 0.04);
+  context.restore();
+}
+
+function drawNodeGlyph(nodeGlyph, ancestorLineToolActive = true) {
+  const isDraggedGlyph = dragState.active && dragState.glyph?.guid === nodeGlyph.guid;
+  const nodeLineToolActive = ancestorLineToolActive && lineToolEnabled && shouldApplyLineToolToNode(nodeGlyph);
+
+  context.save();
+  context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
+  drawNodeRing(nodeGlyph);
+  drawConnector(nodeGlyph);
+  drawNodeProgram(nodeGlyph, nodeLineToolActive);
+  context.restore();
+}
+
+function drawPolygonGlyph(glyph, sides, rotation = 0, fill = null) {
+  context.beginPath();
+  for (let index = 0; index < sides; index += 1) {
+    const angle = rotation + (Math.PI * 2 * index) / sides;
+    const x = glyph.x + glyph.radius * Math.cos(angle);
+    const y = glyph.y + glyph.radius * Math.sin(angle);
+
+    if (index === 0) {
+      context.moveTo(x, y);
+    } else {
+      context.lineTo(x, y);
+    }
+  }
+  context.closePath();
+  if (fill) {
+    context.fillStyle = fill;
+    context.fill();
+  }
+  context.stroke();
+}
+
+function drawTextGlyph(glyph, text, fontScale = 0.95) {
+  context.fillStyle = '#17120b';
+  context.font = `${glyph.radius * fontScale}px Georgia`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(text, glyph.x, glyph.y + glyph.radius * 0.04);
+}
+
+function drawValueGlyph(glyph) {
+  ensureValueGlyphInputIsValid(glyph);
+  const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
+  const text = String(glyph.inputIndex ?? 1);
+
+  context.save();
+  applyCameraTransform();
+  context.lineWidth = glyph.lineWidth;
+  context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
+  context.strokeStyle = '#17120b';
+  context.setLineDash([glyph.lineWidth * 11, glyph.lineWidth * 9]);
+  context.shadowColor = 'rgba(23, 18, 11, 0.12)';
+  context.shadowBlur = 8 * glyph.radius / CHILD_BASE_RADIUS;
+  context.beginPath();
+  context.moveTo(glyph.x, glyph.y - glyph.radius);
+  context.lineTo(glyph.x + glyph.radius, glyph.y);
+  context.lineTo(glyph.x, glyph.y + glyph.radius);
+  context.lineTo(glyph.x - glyph.radius, glyph.y);
+  context.closePath();
+  context.stroke();
+  context.shadowBlur = 0;
+  context.setLineDash([]);
+  drawTextGlyph(glyph, text, 0.6);
+  context.restore();
+}
+
+function drawVariableGlyph(glyph) {
+  const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
+
+  context.save();
+  applyCameraTransform();
+  context.lineWidth = glyph.lineWidth;
+  context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
+  context.strokeStyle = '#17120b';
+  context.shadowColor = 'rgba(23, 18, 11, 0.12)';
+  context.shadowBlur = 8 * glyph.radius / CHILD_BASE_RADIUS;
+  drawPolygonGlyph(glyph, 6, Math.PI / 6);
+  context.shadowBlur = 0;
+  drawTextGlyph(glyph, getGlyphShortLabel(glyph.name, 'VAR'), 0.42);
+  context.restore();
+}
+
+function getReferenceTarget(glyph) {
+  if (!glyph.referenceGlyphGuid) {
+    return null;
+  }
+
+  return findGlyphByGuid(glyph.referenceGlyphGuid);
+}
+
+function drawReferenceGlyph(glyph) {
+  const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
+  const referenceTarget = getReferenceTarget(glyph);
+
+  context.save();
+  applyCameraTransform();
+  context.lineWidth = glyph.lineWidth;
+  context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
+  context.strokeStyle = '#17120b';
+  context.setLineDash([glyph.lineWidth * 11, glyph.lineWidth * 9]);
+  context.shadowColor = 'rgba(23, 18, 11, 0.12)';
+  context.shadowBlur = 8 * glyph.radius / CHILD_BASE_RADIUS;
+  drawPolygonGlyph(glyph, 6, Math.PI / 6);
+  context.shadowBlur = 0;
+  context.setLineDash([]);
+  drawTextGlyph(glyph, getGlyphShortLabel(referenceTarget?.name, 'REF'), 0.42);
+  context.restore();
+}
+
+function drawMathGlyph(glyph) {
+  const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
+
+  context.save();
+  applyCameraTransform();
+  context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
+  context.strokeStyle = '#17120b';
+  context.lineWidth = glyph.lineWidth;
+  context.lineCap = 'round';
+  const width = glyph.radius * 0.82;
+  const topY = glyph.y - glyph.radius * 0.16;
+  const underlineY = glyph.y + glyph.radius * 0.55;
+
+  if (glyph.type === 'add') {
+    context.beginPath();
+    context.moveTo(glyph.x - width / 2, topY);
+    context.lineTo(glyph.x + width / 2, topY);
+    context.moveTo(glyph.x, topY - glyph.radius * 0.38);
+    context.lineTo(glyph.x, topY + glyph.radius * 0.38);
+    context.stroke();
+  } else {
+    context.beginPath();
+    context.moveTo(glyph.x - width / 2, topY);
+    context.lineTo(glyph.x + width / 2, topY);
+    context.stroke();
+  }
+
+  context.beginPath();
+  context.moveTo(glyph.x - width * 0.58, underlineY);
+  context.lineTo(glyph.x + width * 0.58, underlineY);
+  context.stroke();
+  context.restore();
+}
+
+function drawOutputGlyph(glyph) {
+  const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
+
+  context.save();
+  applyCameraTransform();
+  context.lineWidth = glyph.lineWidth;
+  context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
+  context.strokeStyle = '#17120b';
+  context.shadowColor = 'rgba(23, 18, 11, 0.12)';
+  context.shadowBlur = 8 * glyph.radius / CHILD_BASE_RADIUS;
+  drawPolygonGlyph(glyph, 8, Math.PI / 8);
+  context.restore();
+}
+
+function drawGlyph(glyph, ancestorLineToolActive = true) {
+  switch (glyph.type) {
+    case 'node':
+      drawNodeGlyph(glyph, ancestorLineToolActive);
+      break;
+    case 'variable':
+      drawVariableGlyph(glyph);
+      break;
+    case 'value':
+      drawValueGlyph(glyph);
+      break;
+    case 'add':
+    case 'subtract':
+      drawMathGlyph(glyph);
+      break;
+    case 'reference':
+      drawReferenceGlyph(glyph);
+      break;
+    case 'output':
+      drawOutputGlyph(glyph);
+      break;
+    default:
+      break;
+  }
+}
+
+function getDiamondBoundaryDistance(radius, unitX, unitY) {
+  const divisor = Math.abs(unitX) + Math.abs(unitY) || 1;
+  return radius / divisor;
+}
+
+function getGlyphBoundaryDistance(glyph, unitX, unitY) {
+  if (glyph.type === 'start' || glyph.type === 'value') {
+    return getDiamondBoundaryDistance(glyph.radius, unitX, unitY);
+  }
+
+  return glyph.radius;
+}
+
+function getGlyphOuterRadius(glyph, unitX, unitY) {
+  return getGlyphBoundaryDistance(glyph, unitX, unitY) + glyph.lineWidth / 2;
+}
+
+function drawArrowMarker(glyph, node, pointsTowardCenter) {
+  const dx = node.x - glyph.x;
+  const dy = node.y - glyph.y;
+  const distance = Math.hypot(dx, dy);
+
+  if (distance === 0) {
+    return;
+  }
+
+  const inwardX = dx / distance;
+  const inwardY = dy / distance;
+  const directionX = pointsTowardCenter ? inwardX : -inwardX;
+  const directionY = pointsTowardCenter ? inwardY : -inwardY;
+  const boundaryDistance = getGlyphBoundaryDistance(glyph, inwardX, inwardY);
+  const arrowGap = node.radius * GROUP_ARROW_GAP_RATIO;
+  const anchorX = glyph.x + inwardX * (boundaryDistance + arrowGap);
+  const anchorY = glyph.y + inwardY * (boundaryDistance + arrowGap);
+  const arrowLength = glyph.radius * 0.4;
+  const arrowHalfWidth = arrowLength * 0.35;
+  const tipX = anchorX + directionX * (arrowLength / 2);
+  const tipY = anchorY + directionY * (arrowLength / 2);
+  const baseX = anchorX - directionX * (arrowLength / 2);
+  const baseY = anchorY - directionY * (arrowLength / 2);
+  const perpX = -directionY;
+  const perpY = directionX;
+
+  context.save();
+  applyCameraTransform();
+  context.fillStyle = '#17120b';
+  context.beginPath();
+  context.moveTo(tipX, tipY);
+  context.lineTo(baseX + perpX * arrowHalfWidth, baseY + perpY * arrowHalfWidth);
+  context.lineTo(baseX - perpX * arrowHalfWidth, baseY - perpY * arrowHalfWidth);
+  context.closePath();
+  context.fill();
+  context.restore();
+}
+
+function drawNodeConnections(node, nodeLineToolActive) {
+  if (!node.layout) {
+    return;
+  }
+
+  const execGlyphs = [node.startGlyph, ...node.glyphs];
+  const execMap = new Map(execGlyphs.map((glyph) => [glyph.guid, glyph]));
+  const lineGap = getScaledValue(node, GROUP_LINE_GAP_RATIO);
+
+  context.save();
+  applyCameraTransform();
+  context.strokeStyle = '#17120b';
+  context.lineCap = 'round';
+  context.shadowColor = 'rgba(23, 18, 11, 0.08)';
+  context.shadowBlur = 6 * node.radius / ROOT_NODE_RADIUS;
+
+  const inputPoints = new Map();
+  const outputPoints = new Map();
+  const paramInputPoints = new Map();
+  const incomingCounts = new Map();
+  const outgoingLineEndSquares = new Map();
+
+  const getGlyphParamInputPoint = (targetGlyph) => {
+    const circleOffset = Math.max(node.lineWidth * 2.6, node.radius * 0.03);
+    const circleRadius = Math.max(node.lineWidth * 2.3, node.radius * 0.036);
+    const spread = circleRadius * 2.4;
+    const topEdge = getGlyphOuterRadius(targetGlyph, 0, -1);
+    const topX = targetGlyph.x;
+    const topY = targetGlyph.y - (topEdge + circleOffset);
+
+    const hasOuterParamConnection = node.outerGlyphs.some((glyph) => glyph.nextGlyphGuid === targetGlyph.guid);
+    const shouldCenter = hasOuterParamConnection && (targetGlyph.type === 'add' || targetGlyph.type === 'subtract');
+
+    return {
+      x: shouldCenter ? topX : topX + spread * 0.55,
+      y: topY,
+    };
+  };
+
+  const drawConnectionSegment = (fromGlyph, toX, toY, kind = 'normal') => {
+    const dx = toX - fromGlyph.x;
+    const dy = toY - fromGlyph.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance === 0) {
+      return null;
+    }
+
+    const unitX = dx / distance;
+    const unitY = dy / distance;
+    const currentOffset = getGlyphOuterRadius(fromGlyph, unitX, unitY) + lineGap;
+    const lineStartX = fromGlyph.x + unitX * currentOffset;
+    const lineStartY = fromGlyph.y + unitY * currentOffset;
+
+    context.beginPath();
+    context.lineWidth = node.lineWidth * 0.9;
+    context.moveTo(lineStartX, lineStartY);
+    context.lineTo(toX, toY);
+    context.stroke();
+    drawMidArrow(lineStartX, lineStartY, toX, toY);
+    drawEndSquare(toX, toY);
+
+    if (nodeLineToolActive) {
+      outputPoints.set(fromGlyph.guid, { x: lineStartX, y: lineStartY });
+      outgoingLineEndSquares.set(fromGlyph.guid, { x: toX, y: toY });
+      if (kind === 'normal') {
+        inputPoints.set(execMap.get(fromGlyph.nextGlyphGuid)?.guid, { x: toX, y: toY });
+      }
+    }
+
+    return { x: lineStartX, y: lineStartY };
+  };
+
+  const drawMidArrow = (startX, startY, endX, endY) => {
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2;
+    const directionX = endX - startX;
+    const directionY = endY - startY;
+    const directionLength = Math.hypot(directionX, directionY);
+
+    if (directionLength === 0) {
+      return;
+    }
+
+    const unitX = directionX / directionLength;
+    const unitY = directionY / directionLength;
+    const arrowLength = Math.max(node.lineWidth * 5, node.radius * 0.08);
+    const arrowHalfWidth = arrowLength * 0.32;
+    const tipX = midX + unitX * (arrowLength / 2);
+    const tipY = midY + unitY * (arrowLength / 2);
+    const baseX = midX - unitX * (arrowLength / 2);
+    const baseY = midY - unitY * (arrowLength / 2);
+    const perpX = -unitY;
+    const perpY = unitX;
+
+    context.save();
+    context.fillStyle = '#17120b';
+    context.shadowBlur = 0;
+    context.beginPath();
+    context.moveTo(tipX, tipY);
+    context.lineTo(baseX + perpX * arrowHalfWidth, baseY + perpY * arrowHalfWidth);
+    context.lineTo(baseX - perpX * arrowHalfWidth, baseY - perpY * arrowHalfWidth);
+    context.closePath();
+    context.fill();
+    context.restore();
+  };
+
+  const drawEndSquare = (endX, endY) => {
+    if (!nodeLineToolActive) {
+      return;
+    }
+
+    const squareSize = Math.max(node.lineWidth * 3.2, node.radius * 0.05);
+    context.save();
+    context.fillStyle = '#17120b';
+    context.shadowBlur = 0;
+    context.fillRect(endX - squareSize / 2, endY - squareSize / 2, squareSize, squareSize);
+    context.restore();
+  };
+
+  const drawIoCircle = (x, y, dashed, kind) => {
+    const circleRadius = Math.max(node.lineWidth * 2.3, node.radius * 0.036);
+    const circleLineWidth = Math.max(1, node.lineWidth * 0.9);
+
+    context.save();
+    context.lineWidth = circleLineWidth;
+    if (kind === 'param-input') {
+      context.strokeStyle = 'rgba(205, 125, 28, 0.8)';
+    } else if (kind === 'outer-output') {
+      context.strokeStyle = 'rgba(205, 125, 28, 0.8)';
+    } else if (kind === 'output') {
+      context.strokeStyle = 'rgba(160, 35, 35, 0.8)';
+    } else {
+      context.strokeStyle = 'rgba(45, 95, 170, 0.8)';
+    }
+    context.shadowBlur = 0;
+
+    if (dashed) {
+      context.setLineDash([circleLineWidth * 1.95, circleLineWidth * 1.8]);
+    } else {
+      context.setLineDash([]);
+    }
+
+    context.beginPath();
+    context.arc(x, y, circleRadius, 0, Math.PI * 2);
+    context.stroke();
+    context.restore();
+  };
+
+  for (let index = 0; index < execGlyphs.length; index += 1) {
+    const currentGlyph = execGlyphs[index];
+    const nextGlyph = currentGlyph.nextGlyphGuid ? execMap.get(currentGlyph.nextGlyphGuid) : null;
+
+    if (!nextGlyph) {
+      continue;
+    }
+
+    const dx = nextGlyph.x - currentGlyph.x;
+    const dy = nextGlyph.y - currentGlyph.y;
+    const distance = Math.hypot(dx, dy);
+
+    if (distance === 0) {
+      continue;
+    }
+
+    const unitX = dx / distance;
+    const unitY = dy / distance;
+    const currentOffset = getGlyphOuterRadius(currentGlyph, unitX, unitY) + lineGap;
+    const nextOffset = getGlyphOuterRadius(nextGlyph, -unitX, -unitY) + lineGap;
+
+    if (distance <= currentOffset + nextOffset) {
+      continue;
+    }
+
+    const lineStartX = currentGlyph.x + unitX * currentOffset;
+    const lineStartY = currentGlyph.y + unitY * currentOffset;
+    const lineEndX = nextGlyph.x - unitX * nextOffset;
+    const lineEndY = nextGlyph.y - unitY * nextOffset;
+    context.beginPath();
+    context.lineWidth = node.lineWidth * 0.9;
+    context.moveTo(lineStartX, lineStartY);
+    context.lineTo(lineEndX, lineEndY);
+    context.stroke();
+    drawMidArrow(lineStartX, lineStartY, lineEndX, lineEndY);
+    drawEndSquare(lineEndX, lineEndY);
+
+    if (nodeLineToolActive) {
+      outputPoints.set(currentGlyph.guid, { x: lineStartX, y: lineStartY });
+      inputPoints.set(nextGlyph.guid, { x: lineEndX, y: lineEndY });
+      outgoingLineEndSquares.set(currentGlyph.guid, { x: lineEndX, y: lineEndY });
+      incomingCounts.set(nextGlyph.guid, (incomingCounts.get(nextGlyph.guid) || 0) + 1);
+    }
+  }
+
+  for (const outerGlyph of node.outerGlyphs) {
+    if (!outerGlyph.nextGlyphGuid) {
+      continue;
+    }
+
+    if (outerGlyph.nextGlyphGuid === node.startGlyph.guid) {
+      const circleOffset = Math.max(node.lineWidth * 2.6, node.radius * 0.03);
+      const startPoint = getGlyphDefaultInputPoint(node, node.startGlyph, circleOffset);
+      drawConnectionSegment(outerGlyph, startPoint.x, startPoint.y, 'param');
+
+      if (nodeLineToolActive) {
+        paramInputPoints.set(node.startGlyph.guid, startPoint);
+      }
+
+      continue;
+    }
+
+    const targetGlyph = execMap.get(outerGlyph.nextGlyphGuid);
+    if (!targetGlyph || !(isNode(targetGlyph) || targetGlyph.type === 'add' || targetGlyph.type === 'subtract')) {
+      continue;
+    }
+
+    const paramPoint = getGlyphParamInputPoint(targetGlyph);
+    drawConnectionSegment(outerGlyph, paramPoint.x, paramPoint.y, 'param');
+
+    if (nodeLineToolActive) {
+      paramInputPoints.set(targetGlyph.guid, paramPoint);
+    }
+  }
+
+  if (nodeLineToolActive) {
+    const circleOffset = Math.max(node.lineWidth * 2.6, node.radius * 0.03);
+    const circleRadius = Math.max(node.lineWidth * 2.3, node.radius * 0.036);
+    const inputSpread = circleRadius * 2.4;
+    const ringGlyphs = [...execGlyphs, ...node.outerGlyphs];
+
+    ringGlyphs.forEach((glyph) => {
+      const dx = glyph.x - node.x;
+      const dy = glyph.y - node.y;
+      const length = Math.hypot(dx, dy) || 1;
+      const unitX = dx / length;
+      const unitY = dy / length;
+
+      const defaultOutput = getGlyphDefaultOutputPoint(node, glyph, circleOffset);
+      const defaultInput = getGlyphDefaultInputPoint(node, glyph, circleOffset);
+      const defaultInputX = (glyph.type === 'node' || glyph.type === 'add' || glyph.type === 'subtract')
+        ? defaultInput.x - inputSpread * 0.55
+        : defaultInput.x;
+      const defaultInputY = defaultInput.y;
+      const defaultOutputX = defaultOutput.x;
+      const defaultOutputY = defaultOutput.y;
+
+      const isOuterDataGlyph = glyph.ring === 'outer' && (glyph.type === 'variable' || glyph.type === 'reference' || glyph.type === 'value');
+      const incomingCount = incomingCounts.get(glyph.guid) || 0;
+      const hasOutgoing = outputPoints.has(glyph.guid);
+
+      const inputPoint = incomingCount === 1
+        ? (inputPoints.get(glyph.guid) || { x: defaultInputX, y: defaultInputY })
+        : { x: defaultInputX, y: defaultInputY };
+
+      const outputPoint = outputPoints.get(glyph.guid) || { x: defaultOutputX, y: defaultOutputY };
+
+      if (isOuterDataGlyph) {
+        outputPoints.set(glyph.guid, outputPoint);
+      }
+
+      if (!isOuterDataGlyph) {
+        if (glyph.type === 'start') {
+          drawIoCircle(inputPoint.x, inputPoint.y, false, 'param-input');
+          paramInputPoints.set(glyph.guid, { x: inputPoint.x, y: inputPoint.y });
+        } else {
+          drawIoCircle(inputPoint.x, inputPoint.y, true, 'input');
+        }
+      }
+
+      drawIoCircle(outputPoint.x, outputPoint.y, true, isOuterDataGlyph ? 'outer-output' : 'output');
+
+      if (glyph.type === 'node' || glyph.type === 'add' || glyph.type === 'subtract') {
+        const paramPoint = paramInputPoints.get(glyph.guid) || getGlyphParamInputPoint(glyph);
+        const extraX = paramPoint.x;
+        const extraY = paramPoint.y;
+        drawIoCircle(extraX, extraY, false, 'param-input');
+        paramInputPoints.set(glyph.guid, { x: extraX, y: extraY });
+      }
+    });
+
+    node.__lineToolCache = {
+      execGlyphGuids: execGlyphs.map((glyph) => glyph.guid),
+      outputSourceGuids: [...execGlyphs, ...node.outerGlyphs].map((glyph) => glyph.guid),
+      outputPoints,
+      inputPoints,
+      paramInputPoints,
+      incomingCounts,
+      endSquares: outgoingLineEndSquares,
+      circleOffset,
+      circleRadius: Math.max(node.lineWidth * 2.3, node.radius * 0.036),
+    };
+  }
+
+  context.restore();
+}
+
+function drawNodeProgram(node, nodeLineToolActive) {
+  if (!node.layout) {
+    return;
+  }
+
+  if (!nodeLineToolActive) {
+    node.__lineToolCache = null;
+  }
+
+  drawNodeConnections(node, nodeLineToolActive);
+  drawStartGlyph(node.startGlyph);
+  node.glyphs.forEach((glyph) => drawGlyph(glyph, nodeLineToolActive));
+  node.outerGlyphs.forEach((glyph) => drawGlyph(glyph, nodeLineToolActive));
+  drawArrowMarker(node.startGlyph, node, false);
+  if (node.glyphs.length > 0) {
+    drawArrowMarker(node.glyphs[node.glyphs.length - 1], node, true);
+  }
+}
+
+function drawGhostGlyph() {
+  if (!dragState.active || !dragState.glyph) {
+    return;
+  }
+
+  const ghostGlyph = {
+    ...dragState.glyph,
+    x: dragState.worldX,
+    y: dragState.worldY,
+    lineWidth: dragState.glyph.lineWidth,
+  };
+
+  context.save();
+  context.globalAlpha = 0.55;
+
+  if (ghostGlyph.type === 'node') {
+    const ghostNode = {
+      ...ghostGlyph,
+      glyphs: [],
+      layout: null,
+    };
+    drawNodeRing(ghostNode);
+    drawConnector(ghostNode);
+  } else {
+    switch (ghostGlyph.type) {
+      case 'variable':
+        drawVariableGlyph(ghostGlyph);
+        break;
+      case 'value':
+        drawValueGlyph(ghostGlyph);
+        break;
+      case 'add':
+      case 'subtract':
+        drawMathGlyph(ghostGlyph);
+        break;
+      case 'output':
+        drawOutputGlyph(ghostGlyph);
+        break;
+      default:
+        break;
+    }
+  }
+
+  context.restore();
+}
+
+function drawGhostWire() {
+  if (!wireDragState.active || !wireDragState.node || !wireDragState.fromPoint || !wireDragState.toWorld) {
+    return;
+  }
+
+  const start = wireDragState.fromPoint;
+  const end = wireDragState.toWorld;
+  const node = wireDragState.node;
+  const lineWidth = node.lineWidth * 0.9;
+
+  context.save();
+  applyCameraTransform();
+  context.globalAlpha *= 0.75;
+  context.strokeStyle = '#17120b';
+  context.lineWidth = lineWidth;
+  context.lineCap = 'round';
+  context.beginPath();
+  context.moveTo(start.x, start.y);
+  context.lineTo(end.x, end.y);
+  context.stroke();
+
+  const midX = (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist > 0) {
+    const unitX = dx / dist;
+    const unitY = dy / dist;
+    const arrowLength = Math.max(node.lineWidth * 5, node.radius * 0.08);
+    const arrowHalfWidth = arrowLength * 0.32;
+    const tipX = midX + unitX * (arrowLength / 2);
+    const tipY = midY + unitY * (arrowLength / 2);
+    const baseX = midX - unitX * (arrowLength / 2);
+    const baseY = midY - unitY * (arrowLength / 2);
+    const perpX = -unitY;
+    const perpY = unitX;
+    context.fillStyle = '#17120b';
+    context.beginPath();
+    context.moveTo(tipX, tipY);
+    context.lineTo(baseX + perpX * arrowHalfWidth, baseY + perpY * arrowHalfWidth);
+    context.lineTo(baseX - perpX * arrowHalfWidth, baseY - perpY * arrowHalfWidth);
+    context.closePath();
+    context.fill();
+  }
+
+  if (lineToolEnabled) {
+    const squareSize = Math.max(node.lineWidth * 3.2, node.radius * 0.05);
+    context.fillStyle = '#17120b';
+    context.fillRect(end.x - squareSize / 2, end.y - squareSize / 2, squareSize, squareSize);
+  }
+
+  context.restore();
+}
+
+function drawScene() {
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+
+  context.clearRect(0, 0, width, height);
+  drawBackground(width, height);
+  drawGrid(width, height);
+  topLevelNodes.forEach((node) => drawNodeGlyph(node, true));
+  drawGhostGlyph();
+  drawGhostWire();
+}
+
+function findNodeHit(node, worldX, worldY) {
+  for (let index = node.glyphs.length - 1; index >= 0; index -= 1) {
+    const glyph = node.glyphs[index];
+    if (isNode(glyph)) {
+      const nested = findNodeHit(glyph, worldX, worldY);
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+
+  const distance = Math.hypot(worldX - node.x, worldY - node.y);
+  return distance <= node.radius ? node : null;
+}
+
+function findDropTarget(worldX, worldY) {
+  for (let index = topLevelNodes.length - 1; index >= 0; index -= 1) {
+    const match = findNodeHit(topLevelNodes[index], worldX, worldY);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function findDirectChildNodeHit(node, worldX, worldY, excludedGuid = null) {
+  for (let index = node.glyphs.length - 1; index >= 0; index -= 1) {
+    const glyph = node.glyphs[index];
+
+    if (!isNode(glyph) || glyph.guid === excludedGuid) {
+      continue;
+    }
+
+    if (Math.hypot(worldX - glyph.x, worldY - glyph.y) <= glyph.radius) {
+      return glyph;
+    }
+  }
+
+  return null;
+}
+
+function removeGlyphFromNode(node, glyphGuid) {
+  const innerIndex = node.glyphs.findIndex((glyph) => glyph.guid === glyphGuid);
+  if (innerIndex !== -1) {
+    return node.glyphs.splice(innerIndex, 1)[0];
+  }
+
+  const outerIndex = node.outerGlyphs.findIndex((glyph) => glyph.guid === glyphGuid);
+  if (outerIndex !== -1) {
+    return node.outerGlyphs.splice(outerIndex, 1)[0];
+  }
+
+  return null;
+}
+
+function insertGlyphIntoNode(node, glyph, index, layer = 'inner') {
+  glyph.parentNodeGuid = node.guid;
+
+  if (layer === 'outer') {
+    glyph.ring = 'outer';
+    node.outerGlyphs.splice(index, 0, glyph);
+    return;
+  }
+
+  glyph.ring = 'inner';
+  node.glyphs.splice(index, 0, glyph);
+}
+
+function appendGlyphIntoNode(node, glyph, layer = 'inner') {
+  if (layer === 'outer') {
+    insertGlyphIntoNode(node, glyph, node.outerGlyphs.length, layer);
+    return;
+  }
+
+  insertGlyphIntoNode(node, glyph, node.glyphs.length, layer);
+}
+
+function deleteDraggedGlyph(glyph, sourceNode) {
+  if (isNode(glyph)) {
+    openDeleteModal(glyph, sourceNode);
+    return;
+  }
+
+  removeGlyphFromNode(sourceNode, glyph.guid);
+  layoutAllNodes();
+  drawScene();
+}
+
+function getInsertionIndexForRing(centerX, centerY, count, worldX, worldY, reservedGap) {
+  if (count === 0) {
+    return 0;
+  }
+
+  const angle = Math.atan2(worldY - centerY, worldX - centerX);
+  const normalizedAngle = (angle - START_ANGLE + Math.PI * 2) % (Math.PI * 2);
+  const sectorSize = reservedGap ? (Math.PI * 2) / (count + 1) : (Math.PI * 2) / count;
+  return Math.min(count, Math.floor(normalizedAngle / sectorSize));
+}
+
+function getRingDropZone(node, worldX, worldY) {
+  if (!node.layout) {
+    return null;
+  }
+
+  const distance = Math.hypot(worldX - node.x, worldY - node.y);
+  const bandThickness = node.layout.glyphRadius * 1.4;
+
+  if (Math.abs(distance - node.layout.outerOrbitRadius) <= bandThickness) {
+    return 'outer';
+  }
+
+  if (Math.abs(distance - node.layout.orbitRadius) <= bandThickness) {
+    return 'inner';
+  }
+
+  return null;
+}
+
+function finishGlyphDrag(worldX, worldY) {
+  const { glyph, sourceNode } = dragState;
+  if (!glyph || !sourceNode) {
+    return;
+  }
+
+  const parentNode = sourceNode.parentNodeGuid ? findNodeByGuid(sourceNode.parentNodeGuid) : null;
+  const childNodeTarget = findDirectChildNodeHit(sourceNode, worldX, worldY, glyph.guid);
+
+  if (isPointInsideConnector(sourceNode, worldX, worldY)) {
+    deleteDraggedGlyph(glyph, sourceNode);
+    return;
+  }
+
+  removeGlyphFromNode(sourceNode, glyph.guid);
+
+  if (childNodeTarget) {
+    appendGlyphIntoNode(childNodeTarget, glyph, glyph.type === 'value' ? 'outer' : 'inner');
+  } else {
+    const ringZone = getRingDropZone(sourceNode, worldX, worldY);
+
+    if (ringZone) {
+      const wantsOuter = ringZone === 'outer'
+        && (glyph.type === 'variable' || glyph.type === 'reference' || glyph.type === 'value');
+      const forcedOuter = glyph.type === 'value';
+      const layer = forcedOuter ? 'outer' : wantsOuter ? 'outer' : 'inner';
+      const count = layer === 'outer' ? sourceNode.outerGlyphs.length : sourceNode.glyphs.length;
+      const insertionIndex = getInsertionIndexForRing(sourceNode.x, sourceNode.y, count, worldX, worldY, layer === 'inner');
+      insertGlyphIntoNode(sourceNode, glyph, insertionIndex, layer);
+    } else if (Math.hypot(worldX - sourceNode.x, worldY - sourceNode.y) > sourceNode.radius) {
+    if (parentNode) {
+      appendGlyphIntoNode(parentNode, glyph, glyph.type === 'value' ? 'outer' : 'inner');
+    } else {
+      appendGlyphIntoNode(sourceNode, glyph, glyph.type === 'value' ? 'outer' : 'inner');
+    }
+    } else {
+      if (glyph.type === 'value') {
+        appendGlyphIntoNode(sourceNode, glyph, 'outer');
+      } else {
+        const insertionIndex = getInsertionIndexForRing(sourceNode.x, sourceNode.y, sourceNode.glyphs.length, worldX, worldY, true);
+        insertGlyphIntoNode(sourceNode, glyph, insertionIndex, 'inner');
+      }
+    }
+  }
+
+  layoutAllNodes();
+  drawScene();
+}
+
+function clearGlyphDrag() {
+  dragState.active = false;
+  dragState.moved = false;
+  dragState.pointerId = null;
+  dragState.glyph = null;
+  dragState.sourceNode = null;
+  dragState.worldX = 0;
+  dragState.worldY = 0;
+}
+
+function isPointInsideConnector(node, worldX, worldY) {
+  const radius = getConnectorRadius(node);
+  const localX = worldX - node.x;
+  const localY = worldY - node.y;
+  const halfSquare = radius * 0.72;
+  return (Math.abs(localX) <= halfSquare && Math.abs(localY) <= halfSquare)
+    || (Math.abs(localX) + Math.abs(localY) <= radius);
+}
+
+function findConnectorTarget(node, worldX, worldY) {
+  for (let index = node.glyphs.length - 1; index >= 0; index -= 1) {
+    const glyph = node.glyphs[index];
+    if (isNode(glyph)) {
+      const nested = findConnectorTarget(glyph, worldX, worldY);
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+
+  return isPointInsideConnector(node, worldX, worldY) ? node : null;
+}
+
+function isPointInsideTriangleGlyph(glyph, worldX, worldY) {
+  const localX = worldX - glyph.x;
+  const localY = worldY - glyph.y;
+  if (localY < -glyph.radius || localY > glyph.radius * 0.9) {
+    return false;
+  }
+
+  const normalizedY = (localY + glyph.radius) / (glyph.radius * 1.9);
+  const halfWidth = glyph.radius * (0.08 + normalizedY * 0.84);
+  return Math.abs(localX) <= halfWidth;
+}
+
+function isPointInsideOctagonGlyph(glyph, worldX, worldY) {
+  const localX = Math.abs(worldX - glyph.x);
+  const localY = Math.abs(worldY - glyph.y);
+  const r = glyph.radius;
+  return localX <= r && localY <= r && localX + localY <= r * 1.62;
+}
+
+function isPointInsideGlyph(glyph, worldX, worldY) {
+  if (isNode(glyph)) {
+    return Math.hypot(worldX - glyph.x, worldY - glyph.y) <= glyph.radius;
+  }
+
+  if (glyph.type === 'variable' || glyph.type === 'value' || glyph.type === 'reference') {
+    return Math.hypot(worldX - glyph.x, worldY - glyph.y) <= glyph.radius;
+  }
+
+  if (glyph.type === 'output') {
+    return isPointInsideOctagonGlyph(glyph, worldX, worldY);
+  }
+
+  return Math.hypot(worldX - glyph.x, worldY - glyph.y) <= glyph.radius;
+}
+
+function findGlyphHit(node, worldX, worldY, predicate = () => true) {
+  const combinedGlyphs = [...node.outerGlyphs, ...node.glyphs];
+
+  for (let index = combinedGlyphs.length - 1; index >= 0; index -= 1) {
+    const glyph = combinedGlyphs[index];
+
+    if (isNode(glyph)) {
+      const nested = findGlyphHit(glyph, worldX, worldY, predicate);
+      if (nested) {
+        return nested;
+      }
+    }
+
+    if (predicate(glyph) && isPointInsideGlyph(glyph, worldX, worldY)) {
+      return glyph;
+    }
+  }
+
+  return null;
+}
+
+function findCanvasGlyph(worldX, worldY, predicate = () => true) {
+  for (let index = topLevelNodes.length - 1; index >= 0; index -= 1) {
+    const glyph = findGlyphHit(topLevelNodes[index], worldX, worldY, predicate);
+    if (glyph) {
+      return glyph;
+    }
+  }
+
+  return null;
+}
+
+function getGlyphTooltip(glyph) {
+  switch (glyph.type) {
+    case 'variable':
+      return { title: glyph.name, description: `Value: ${glyph.value}` };
+    case 'add':
+      return { title: 'Add', description: `Operand: ${glyph.operand}` };
+    case 'subtract':
+      return { title: 'Subtract', description: `Operand: ${glyph.operand}` };
+    case 'reference': {
+      const target = getReferenceTarget(glyph);
+      return { title: 'Reference', description: target ? `Variable: ${target.name}` : 'Variable: none' };
+    }
+    case 'output':
+      return { title: 'Output', description: 'Logs the current value to the console.' };
+    case 'value':
+      return { title: glyph.name, description: '' };
+    default:
+      return null;
+  }
+}
+
+function focusNode(node) {
+  focusedNode = node;
+  camera.x = node.x;
+  camera.y = node.y;
+  camera.zoom = getFocusZoomForNode(node);
+  drawScene();
+}
+
+function updateCanvasHover(clientX, clientY) {
+  if (
+    panState.active
+    || dragState.active
+    || wireDragState.active
+    || activeValueDropdown
+    || variableModalBackdrop.classList.contains('is-visible')
+    || referenceModalBackdrop.classList.contains('is-visible')
+    || deleteModalBackdrop.classList.contains('is-visible')
+  ) {
+    canvas.classList.remove('is-connector-hover');
+    hideTooltip();
+    return;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const worldPoint = screenToWorld(clientX - rect.left, clientY - rect.top);
+  let connectorTarget = null;
+  for (let index = topLevelNodes.length - 1; index >= 0; index -= 1) {
+    connectorTarget = findConnectorTarget(topLevelNodes[index], worldPoint.x, worldPoint.y);
+    if (connectorTarget) {
+      break;
+    }
+  }
+
+  canvas.classList.toggle('is-connector-hover', Boolean(connectorTarget));
+
+  const hoverGlyph = findCanvasGlyph(
+    worldPoint.x,
+    worldPoint.y,
+    (glyph) => glyph.type === 'variable' || glyph.type === 'reference' || glyph.type === 'value',
+  );
+  if (hoverGlyph) {
+    hoverCanvasGlyphGuid = hoverGlyph.guid;
+    const tooltip = getGlyphTooltip(hoverGlyph);
+    showTooltip(tooltip.title, tooltip.description, clientX, clientY);
+    return;
+  }
+
+  if (hoverCanvasGlyphGuid) {
+    hideTooltip();
+  }
+}
+
+function getDeepestNodeAt(worldX, worldY) {
+  return findDropTarget(worldX, worldY);
+}
+
+function findLineToolStartTargetInNode(node, worldX, worldY) {
+  for (let index = node.glyphs.length - 1; index >= 0; index -= 1) {
+    const glyph = node.glyphs[index];
+    if (isNode(glyph)) {
+      const nestedTarget = findLineToolStartTargetInNode(glyph, worldX, worldY);
+      if (nestedTarget) {
+        return nestedTarget;
+      }
+    }
+  }
+
+  const cache = node.__lineToolCache;
+  if (!cache || !shouldApplyLineToolToNode(node)) {
+    return null;
+  }
+
+  const squareSize = Math.max(node.lineWidth * 3.2, node.radius * 0.05);
+
+  for (const [fromGuid, squarePoint] of cache.endSquares.entries()) {
+    if (Math.abs(worldX - squarePoint.x) <= squareSize / 2 && Math.abs(worldY - squarePoint.y) <= squareSize / 2) {
+      const fromGlyph = getOutputSourceGlyphByGuid(node, fromGuid);
+      if (fromGlyph) {
+        return {
+          node,
+          fromGuid,
+          fromGlyph,
+          fromPoint: cache.outputPoints.get(fromGuid) || getGlyphDefaultOutputPoint(node, fromGlyph, cache.circleOffset),
+        };
+      }
+    }
+  }
+
+  for (const fromGuid of cache.outputSourceGuids) {
+    const fromGlyph = getOutputSourceGlyphByGuid(node, fromGuid);
+    if (!fromGlyph) {
+      continue;
+    }
+
+    const outputPoint = cache.outputPoints.get(fromGuid) || getGlyphDefaultOutputPoint(node, fromGlyph, cache.circleOffset);
+    if (Math.hypot(worldX - outputPoint.x, worldY - outputPoint.y) <= cache.circleRadius * 1.25) {
+      return {
+        node,
+        fromGuid,
+        fromGlyph,
+        fromPoint: outputPoint,
+      };
+    }
+  }
+
+  return null;
+}
+
+function findLineToolStartTarget(worldX, worldY) {
+  if (wireDragState.active) {
+    return null;
+  }
+
+  for (let index = topLevelNodes.length - 1; index >= 0; index -= 1) {
+    const target = findLineToolStartTargetInNode(topLevelNodes[index], worldX, worldY);
+    if (target) {
+      return target;
+    }
+  }
+
+  return null;
+}
+
+function getExecGlyphByGuid(node, guid) {
+  if (node.startGlyph.guid === guid) {
+    return node.startGlyph;
+  }
+
+  return node.glyphs.find((glyph) => glyph.guid === guid) || null;
+}
+
+function getOutputSourceGlyphByGuid(node, guid) {
+  return getExecGlyphByGuid(node, guid) || node.outerGlyphs.find((glyph) => glyph.guid === guid) || null;
+}
+
+function getGlyphDefaultOutputPoint(node, glyph, circleOffset) {
+  const outwardEdge = getGlyphOuterRadius(glyph, 0, 1);
+  return {
+    x: glyph.x,
+    y: glyph.y + (outwardEdge + circleOffset),
+  };
+}
+
+function getGlyphDefaultInputPoint(node, glyph, circleOffset) {
+  const inwardEdge = getGlyphOuterRadius(glyph, 0, -1);
+  return {
+    x: glyph.x,
+    y: glyph.y - (inwardEdge + circleOffset),
+  };
+}
+
+function disconnectOutgoing(fromGlyph) {
+  fromGlyph.nextGlyphGuid = null;
+  fromGlyph.nextGlyphGuidIsAuto = false;
+}
+
+function connectOutgoing(fromGlyph, toGuid) {
+  fromGlyph.nextGlyphGuid = toGuid;
+  fromGlyph.nextGlyphGuidIsAuto = false;
+}
+
+function startWireDrag(node, fromGuid, fromPoint, pointerId, worldX, worldY) {
+  wireDragState.active = true;
+  wireDragState.pointerId = pointerId;
+  wireDragState.node = node;
+  wireDragState.fromGuid = fromGuid;
+  wireDragState.fromPoint = fromPoint;
+  wireDragState.toWorld = { x: worldX, y: worldY };
+}
+
+function clearWireDrag() {
+  if (wireDragState.pointerId !== null && canvas.hasPointerCapture?.(wireDragState.pointerId)) {
+    canvas.releasePointerCapture(wireDragState.pointerId);
+  }
+
+  wireDragState.active = false;
+  wireDragState.pointerId = null;
+  wireDragState.node = null;
+  wireDragState.fromGuid = null;
+  wireDragState.fromPoint = null;
+  wireDragState.toWorld = null;
+}
+
+function finishWireDrag(clientX, clientY) {
+  if (!wireDragState.active || !wireDragState.node || !wireDragState.fromGuid) {
+    clearWireDrag();
+    return;
+  }
+
+  const node = wireDragState.node;
+  const fromGlyph = getOutputSourceGlyphByGuid(node, wireDragState.fromGuid);
+  const cache = node.__lineToolCache;
+  if (!fromGlyph || !cache) {
+    clearWireDrag();
+    return;
+  }
+
+  const circleRadius = cache.circleRadius;
+  const circleOffset = cache.circleOffset;
+  const rect = canvas.getBoundingClientRect();
+  const dropPoint = screenToWorld(clientX - rect.left, clientY - rect.top);
+  wireDragState.toWorld = { x: dropPoint.x, y: dropPoint.y };
+  const isOuterDataSource = fromGlyph.ring === 'outer'
+    && (fromGlyph.type === 'variable' || fromGlyph.type === 'reference' || fromGlyph.type === 'value');
+
+  let targetGuid = null;
+  if (isOuterDataSource) {
+    for (const [guid, paramPoint] of cache.paramInputPoints.entries()) {
+      if (Math.hypot(dropPoint.x - paramPoint.x, dropPoint.y - paramPoint.y) <= circleRadius * 1.05) {
+        targetGuid = guid;
+        break;
+      }
+    }
+  } else {
+    for (const guid of cache.execGlyphGuids) {
+      if (guid === node.startGlyph.guid) {
+        continue;
+      }
+
+      const glyph = getExecGlyphByGuid(node, guid);
+      if (!glyph) {
+        continue;
+      }
+
+      const incomingCount = cache.incomingCounts.get(guid) || 0;
+      const baseInputPoint = incomingCount === 1 && cache.inputPoints.get(guid)
+        ? cache.inputPoints.get(guid)
+        : getGlyphDefaultInputPoint(node, glyph, circleOffset);
+
+      const inputSpread = circleRadius * 2.4;
+      const inputPoint = (glyph.type === 'node' || glyph.type === 'add' || glyph.type === 'subtract')
+        && (incomingCount === 0 || !cache.inputPoints.get(guid))
+        ? { x: baseInputPoint.x - inputSpread * 0.55, y: baseInputPoint.y }
+        : baseInputPoint;
+
+      if (Math.hypot(dropPoint.x - inputPoint.x, dropPoint.y - inputPoint.y) <= circleRadius * 1.05) {
+        targetGuid = guid;
+        break;
+      }
+    }
+  }
+
+  if (targetGuid) {
+    connectOutgoing(fromGlyph, targetGuid);
+  }
+
+  layoutAllNodes();
+  clearWireDrag();
+  drawScene();
+
+  updateCanvasHover(clientX, clientY);
+}
+
+function closeValueDropdown() {
+  if (!activeValueDropdown) {
+    activeValueGlyph = null;
+    return;
+  }
+
+  activeValueDropdown.wrapper.remove();
+  activeValueDropdown = null;
+  activeValueGlyph = null;
+}
+
+function openValueDropdown(valueGlyph, clientX, clientY) {
+  closeValueDropdown();
+
+  activeValueGlyph = valueGlyph;
+  const node = valueGlyph.parentNodeGuid ? findNodeByGuid(valueGlyph.parentNodeGuid) : null;
+  if (!node) {
+    return;
+  }
+
+  const hasParam = nodeHasParamInputConnection(node);
+  const wrapper = document.createElement('div');
+  wrapper.className = 'inline-dropdown';
+  wrapper.style.left = `${Math.min(window.innerWidth - 180, clientX + 10)}px`;
+  wrapper.style.top = `${Math.min(window.innerHeight - 44, clientY + 10)}px`;
+
+  const select = document.createElement('select');
+  select.className = 'inline-dropdown__select';
+
+  const directOption = document.createElement('option');
+  directOption.value = '1';
+  directOption.textContent = '1 — Direct';
+  select.append(directOption);
+
+  if (hasParam) {
+    const paramOption = document.createElement('option');
+    paramOption.value = '2';
+    paramOption.textContent = '2 — Param';
+    select.append(paramOption);
+  }
+
+  ensureValueGlyphInputIsValid(valueGlyph);
+  select.value = String(valueGlyph.inputIndex ?? 1);
+
+  select.addEventListener('change', () => {
+    valueGlyph.inputIndex = Number(select.value) === 2 ? 2 : 1;
+    closeValueDropdown();
+    drawScene();
+  });
+
+  select.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeValueDropdown();
+      drawScene();
+    }
+  });
+
+  select.addEventListener('blur', () => {
+    closeValueDropdown();
+    drawScene();
+  });
+
+  wrapper.addEventListener('pointerdown', (event) => {
+    event.stopPropagation();
+  });
+
+  wrapper.append(select);
+  appShell.append(wrapper);
+
+  activeValueDropdown = { wrapper, select };
+  window.setTimeout(() => {
+    select.focus();
+  }, 0);
+}
+
+function openVariableModal(glyph) {
+  activeVariableGlyph = glyph;
+  variableModalNameInput.value = glyph.name || '';
+  variableModalInput.value = glyph.value === 'null' ? '' : glyph.value;
+  variableModalBackdrop.classList.add('is-visible');
+  variableModalBackdrop.setAttribute('aria-hidden', 'false');
+  window.setTimeout(() => {
+    variableModalInput.focus();
+    variableModalInput.select();
+  }, 0);
+}
+
+function closeVariableModal(commit) {
+  if (commit && activeVariableGlyph) {
+    activeVariableGlyph.name = variableModalNameInput.value.trim() || createVariableName();
+    const nextValue = variableModalInput.value.trim() === '' ? 'null' : variableModalInput.value;
+    activeVariableGlyph.value = nextValue;
+  }
+
+  activeVariableGlyph = null;
+  variableModalBackdrop.classList.remove('is-visible');
+  variableModalBackdrop.setAttribute('aria-hidden', 'true');
+  drawScene();
+}
+
+function getAllVariableGlyphs(nodes = topLevelNodes, results = []) {
+  nodes.forEach((node) => {
+    node.glyphs.forEach((glyph) => {
+      if (glyph.type === 'variable') {
+        results.push(glyph);
+      }
+
+      if (isNode(glyph)) {
+        getAllVariableGlyphs([glyph], results);
+      }
+    });
+  });
+
+  return results;
+}
+
+function openReferenceModal(glyph) {
+  activeReferenceGlyph = glyph;
+  const variables = getAllVariableGlyphs().filter((variableGlyph) => variableGlyph.guid !== glyph.guid);
+  referenceModalSelect.innerHTML = '<option value="">None</option>';
+
+  variables.forEach((variableGlyph) => {
+    const option = document.createElement('option');
+    option.value = variableGlyph.guid;
+    option.textContent = variableGlyph.name;
+    referenceModalSelect.append(option);
+  });
+
+  referenceModalSelect.value = glyph.referenceGlyphGuid || '';
+  referenceModalBackdrop.classList.add('is-visible');
+  referenceModalBackdrop.setAttribute('aria-hidden', 'false');
+}
+
+function closeReferenceModal(commit) {
+  if (commit && activeReferenceGlyph) {
+    activeReferenceGlyph.referenceGlyphGuid = referenceModalSelect.value || null;
+  }
+
+  activeReferenceGlyph = null;
+  referenceModalBackdrop.classList.remove('is-visible');
+  referenceModalBackdrop.setAttribute('aria-hidden', 'true');
+  drawScene();
+}
+
+function openDeleteModal(glyph, sourceNode) {
+  pendingDelete = { glyph, sourceNode };
+  deleteModalBackdrop.classList.add('is-visible');
+  deleteModalBackdrop.setAttribute('aria-hidden', 'false');
+}
+
+function closeDeleteModal(commit) {
+  if (commit && pendingDelete) {
+    removeGlyphFromNode(pendingDelete.sourceNode, pendingDelete.glyph.guid);
+    layoutAllNodes();
+    drawScene();
+  }
+
+  pendingDelete = null;
+  deleteModalBackdrop.classList.remove('is-visible');
+  deleteModalBackdrop.setAttribute('aria-hidden', 'true');
+}
+
+function coerceNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function findNodeByGuid(targetGuid, nodes = topLevelNodes) {
+  for (const node of nodes) {
+    if (node.guid === targetGuid) {
+      return node;
+    }
+
+    const nestedNodes = node.glyphs.filter(isNode);
+    const nestedMatch = findNodeByGuid(targetGuid, nestedNodes);
+    if (nestedMatch) {
+      return nestedMatch;
+    }
+  }
+
+  return null;
+}
+
+function findGlyphByGuid(targetGuid, nodes = topLevelNodes) {
+  for (const node of nodes) {
+    if (node.startGlyph.guid === targetGuid) {
+      return node.startGlyph;
+    }
+
+    for (const glyph of [...node.outerGlyphs, ...node.glyphs]) {
+      if (glyph.guid === targetGuid) {
+        return glyph;
+      }
+
+      if (isNode(glyph)) {
+        const nestedGlyph = findGlyphByGuid(targetGuid, [glyph]);
+        if (nestedGlyph) {
+          return nestedGlyph;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function getParentNode(node) {
+  return node.parentNodeGuid ? findNodeByGuid(node.parentNodeGuid) : null;
+}
+
+function nodeHasParamInputConnection(node) {
+  const parentNode = getParentNode(node);
+  if (!parentNode) {
+    return false;
+  }
+
+  return parentNode.outerGlyphs.some((glyph) => glyph.nextGlyphGuid === node.guid);
+}
+
+function ensureValueGlyphInputIsValid(valueGlyph) {
+  const parentNode = valueGlyph.parentNodeGuid ? findNodeByGuid(valueGlyph.parentNodeGuid) : null;
+  if (!parentNode) {
+    valueGlyph.inputIndex = 1;
+    return;
+  }
+
+  const hasParam = nodeHasParamInputConnection(parentNode);
+  if (!hasParam && valueGlyph.inputIndex === 2) {
+    valueGlyph.inputIndex = 1;
+  }
+
+  if (valueGlyph.inputIndex !== 2) {
+    valueGlyph.inputIndex = 1;
+  }
+}
+
+function buildNodeExecutionLookup(node) {
+  const map = new Map();
+  getExecutableSequence(node).forEach((glyph) => {
+    map.set(glyph.guid, glyph);
+  });
+  return map;
+}
+
+function executeGlyph(node, glyph, currentValue, directInput, paramInput) {
+  switch (glyph.type) {
+    case 'variable':
+      if (glyph.ring === 'outer') {
+        return glyph.value;
+      }
+
+      glyph.value = currentValue === null || currentValue === undefined ? 'null' : String(currentValue);
+      return currentValue;
+    case 'value':
+      return currentValue;
+    case 'reference': {
+      const target = getReferenceTarget(glyph);
+      if (glyph.ring === 'outer') {
+        return target?.value ?? currentValue;
+      }
+
+      if (target) {
+        target.value = currentValue === null || currentValue === undefined ? 'null' : String(currentValue);
+      }
+
+      return currentValue;
+    }
+    case 'add': {
+      const paramSource = findIncomingOuterConnection(node, glyph.guid);
+      const operandValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput) : 1;
+      return coerceNumber(currentValue) + coerceNumber(operandValue);
+    }
+    case 'subtract': {
+      const paramSource = findIncomingOuterConnection(node, glyph.guid);
+      const operandValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput) : 1;
+      return coerceNumber(currentValue) - coerceNumber(operandValue);
+    }
+    case 'output':
+      console.log(currentValue);
+      appendMessageLog(currentValue);
+      return currentValue;
+    default:
+      return currentValue;
+  }
+}
+
+function findIncomingOuterConnection(node, targetGuid) {
+  return node.outerGlyphs.find((glyph) => glyph.nextGlyphGuid === targetGuid) || null;
+}
+
+function evaluateOuterGlyphValue(glyph, directInput, paramInput) {
+  if (!glyph) {
+    return directInput;
+  }
+
+  if (glyph.type === 'value') {
+    ensureValueGlyphInputIsValid(glyph);
+    return glyph.inputIndex === 2 ? paramInput : directInput;
+  }
+
+  if (glyph.type === 'variable') {
+    return glyph.value;
+  }
+
+  if (glyph.type === 'reference') {
+    const target = getReferenceTarget(glyph);
+    return target?.value ?? directInput;
+  }
+
+  return directInput;
+}
+
+function resolveParamInputForChild(parentNode, childNodeGuid, directInput, paramInput) {
+  const paramSource = findIncomingOuterConnection(parentNode, childNodeGuid);
+  if (!paramSource) {
+    return null;
+  }
+
+  return evaluateOuterGlyphValue(paramSource, directInput, paramInput);
+}
+
+function executeNode(node, incomingValue, paramValue = null) {
+  const lookup = buildNodeExecutionLookup(node);
+  const directInput = incomingValue;
+  const paramInput = paramValue;
+  const startInputSource = findIncomingOuterConnection(node, node.startGlyph.guid);
+  let currentValue = startInputSource
+    ? evaluateOuterGlyphValue(startInputSource, directInput, paramInput)
+    : directInput;
+  let currentGuid = node.startGlyph.nextGlyphGuid;
+
+  while (currentGuid) {
+    const glyph = lookup.get(currentGuid) ?? findNodeByGuid(currentGuid, [node]);
+    if (!glyph) {
+      break;
+    }
+
+    if (isNode(glyph)) {
+      const childParamValue = resolveParamInputForChild(node, glyph.guid, directInput, paramInput);
+      currentValue = executeNode(glyph, currentValue, childParamValue);
+    } else {
+      currentValue = executeGlyph(node, glyph, currentValue, directInput, paramInput);
+    }
+
+    currentGuid = glyph.nextGlyphGuid;
+  }
+
+  return currentValue;
+}
+
+function getNodeStartY(node) {
+  return node.layout ? node.startGlyph.y : node.y;
+}
+
+function getEntryNode() {
+  if (topLevelNodes.length === 0) {
+    return null;
+  }
+
+  if (topLevelNodes.length === 1) {
+    return topLevelNodes[0];
+  }
+
+  return [...topLevelNodes].sort((left, right) => getNodeStartY(left) - getNodeStartY(right))[0];
+}
+
+function serializeNode(node, nodes, glyphs) {
+  updateNodeOrdering(node);
+  nodes[node.guid] = {
+    guid: node.guid,
+    type: 'node',
+    parentNodeGuid: node.parentNodeGuid,
+    nextGlyphGuid: node.nextGlyphGuid,
+    x: node.x,
+    y: node.y,
+    radius: node.radius,
+    isRoot: Boolean(node.isRoot),
+    glyphGuids: [node.startGlyph.guid, ...node.glyphs.map((glyph) => glyph.guid)],
+    outerGlyphGuids: node.outerGlyphs.map((glyph) => glyph.guid),
+  };
+
+  glyphs[node.startGlyph.guid] = {
+    guid: node.startGlyph.guid,
+    type: 'start',
+    parentNodeGuid: node.guid,
+    nextGlyphGuid: node.startGlyph.nextGlyphGuid,
+  };
+
+  node.glyphs.forEach((glyph) => {
+    if (isNode(glyph)) {
+      serializeNode(glyph, nodes, glyphs);
+      return;
+    }
+
+    glyphs[glyph.guid] = {
+      guid: glyph.guid,
+      type: glyph.type,
+      parentNodeGuid: glyph.parentNodeGuid,
+      nextGlyphGuid: glyph.nextGlyphGuid,
+      ...(glyph.ring ? { ring: glyph.ring } : {}),
+      ...(glyph.name !== undefined ? { name: glyph.name } : {}),
+      ...(glyph.value !== undefined ? { value: glyph.value } : {}),
+      ...(glyph.inputIndex !== undefined ? { inputIndex: glyph.inputIndex } : {}),
+      ...(glyph.operand !== undefined ? { operand: glyph.operand } : {}),
+      ...(glyph.referenceGlyphGuid !== undefined ? { referenceGlyphGuid: glyph.referenceGlyphGuid } : {}),
+    };
+  });
+
+  node.outerGlyphs.forEach((glyph) => {
+    glyphs[glyph.guid] = {
+      guid: glyph.guid,
+      type: glyph.type,
+      parentNodeGuid: glyph.parentNodeGuid,
+      nextGlyphGuid: glyph.nextGlyphGuid,
+      ...(glyph.ring ? { ring: glyph.ring } : {}),
+      ...(glyph.name !== undefined ? { name: glyph.name } : {}),
+      ...(glyph.value !== undefined ? { value: glyph.value } : {}),
+      ...(glyph.inputIndex !== undefined ? { inputIndex: glyph.inputIndex } : {}),
+      ...(glyph.referenceGlyphGuid !== undefined ? { referenceGlyphGuid: glyph.referenceGlyphGuid } : {}),
+    };
+  });
+}
+
+function serializeProgram() {
+  layoutAllNodes();
+  const nodes = {};
+  const glyphs = {};
+  topLevelNodes.forEach((node) => serializeNode(node, nodes, glyphs));
+
+  return {
+    version: 1,
+    rootNodeGuids: topLevelNodes.map((node) => node.guid),
+    nodes,
+    glyphs,
+  };
+}
+
+function resetProgramState() {
+  closeValueDropdown();
+  hideTooltip();
+
+  topLevelNodes.length = 0;
+  focusedNode = null;
+  pendingDelete = null;
+}
+
+function hydrateGlyphFromSerialized(serialized) {
+  const glyph = {
+    guid: serialized.guid,
+    type: serialized.type,
+    parentNodeGuid: serialized.parentNodeGuid,
+    nextGlyphGuid: serialized.nextGlyphGuid ?? null,
+    nextGlyphGuidIsAuto: false,
+    x: 0,
+    y: 0,
+    radius: CHILD_BASE_RADIUS,
+    lineWidth: BASE_NODE_LINE_WIDTH,
+    ring: serialized.ring || 'inner',
+  };
+
+  if (serialized.name !== undefined) {
+    glyph.name = serialized.name;
+  }
+
+  if (serialized.value !== undefined) {
+    glyph.value = serialized.value;
+  }
+
+  if (serialized.operand !== undefined) {
+    glyph.operand = serialized.operand;
+  }
+
+  if (serialized.inputIndex !== undefined) {
+    glyph.inputIndex = serialized.inputIndex;
+  }
+
+  if (serialized.referenceGlyphGuid !== undefined) {
+    glyph.referenceGlyphGuid = serialized.referenceGlyphGuid;
+  }
+
+  return glyph;
+}
+
+function deserializeProgram(program) {
+  if (!program || typeof program !== 'object') {
+    return false;
+  }
+
+  if (!Array.isArray(program.rootNodeGuids) || !program.nodes || !program.glyphs) {
+    return false;
+  }
+
+  const nodeByGuid = new Map();
+  const nodes = program.nodes;
+  const glyphs = program.glyphs;
+
+  Object.values(nodes).forEach((serializedNode) => {
+    if (!serializedNode || serializedNode.type !== 'node' || !serializedNode.guid) {
+      return;
+    }
+
+    const radius = Number(serializedNode.radius) || ROOT_NODE_RADIUS;
+    const node = {
+      guid: serializedNode.guid,
+      type: 'node',
+      parentNodeGuid: serializedNode.parentNodeGuid ?? null,
+      nextGlyphGuid: serializedNode.nextGlyphGuid ?? null,
+      x: Number(serializedNode.x) || 0,
+      y: Number(serializedNode.y) || 0,
+      radius,
+      lineWidth: getStrokeWidthForRadius(radius),
+      glyphs: [],
+      outerGlyphs: [],
+      startGlyph: null,
+      layout: null,
+      isRoot: Boolean(serializedNode.isRoot),
+    };
+
+    nodeByGuid.set(node.guid, node);
+  });
+
+  const hydratedGlyphByGuid = new Map();
+  const getHydratedGlyph = (guid) => {
+    if (!guid) {
+      return null;
+    }
+
+    if (hydratedGlyphByGuid.has(guid)) {
+      return hydratedGlyphByGuid.get(guid);
+    }
+
+    const serialized = glyphs[guid];
+    if (!serialized) {
+      return null;
+    }
+
+    const hydrated = hydrateGlyphFromSerialized(serialized);
+    hydratedGlyphByGuid.set(guid, hydrated);
+    return hydrated;
+  };
+
+  // Attach start glyphs, inner glyphs, and outer glyphs.
+  Object.values(nodes).forEach((serializedNode) => {
+    const node = nodeByGuid.get(serializedNode.guid);
+    if (!node) {
+      return;
+    }
+
+    const glyphGuids = Array.isArray(serializedNode.glyphGuids) ? serializedNode.glyphGuids : [];
+    const outerGlyphGuids = Array.isArray(serializedNode.outerGlyphGuids) ? serializedNode.outerGlyphGuids : [];
+
+    const startGuid = glyphGuids[0];
+    const startGlyph = getHydratedGlyph(startGuid);
+    if (startGlyph && startGlyph.type === 'start') {
+      node.startGlyph = startGlyph;
+      node.startGlyph.parentNodeGuid = node.guid;
+    } else {
+      // Fallback: create a start glyph if missing.
+      node.startGlyph = createStartGlyph(node.guid);
+      node.startGlyph.nextGlyphGuidIsAuto = false;
+    }
+
+    for (const guid of glyphGuids.slice(1)) {
+      const nestedNode = nodeByGuid.get(guid);
+      if (nestedNode) {
+        node.glyphs.push(nestedNode);
+        continue;
+      }
+
+      const glyph = getHydratedGlyph(guid);
+      if (glyph) {
+        node.glyphs.push(glyph);
+      }
+    }
+
+    for (const guid of outerGlyphGuids) {
+      const glyph = getHydratedGlyph(guid);
+      if (glyph) {
+        glyph.ring = 'outer';
+        node.outerGlyphs.push(glyph);
+      }
+    }
+  });
+
+  const roots = program.rootNodeGuids
+    .map((guid) => nodeByGuid.get(guid))
+    .filter(Boolean);
+
+  if (roots.length === 0) {
+    return false;
+  }
+
+  // Recompute variableCount so newly-created variables keep unique names.
+  variableCount = 0;
+  for (const glyph of hydratedGlyphByGuid.values()) {
+    if (glyph.type !== 'variable' || typeof glyph.name !== 'string') {
+      continue;
+    }
+
+    const match = glyph.name.match(/^variable_(\d+)$/);
+    if (match) {
+      variableCount = Math.max(variableCount, Number(match[1]) || 0);
+    }
+  }
+
+  resetProgramState();
+  roots.forEach((node) => topLevelNodes.push(node));
+  focusedNode = roots[0];
+
+  layoutAllNodes();
+  drawScene();
+  return true;
+}
+
+function playProgram() {
+  const entryNode = getEntryNode();
+  if (!entryNode) {
+    return;
+  }
+
+  layoutAllNodes();
+  updateNodeOrdering(entryNode);
+  const result = executeNode(entryNode, null);
+  console.log('MagiScript execution finished:', result);
+}
+
+function resizeCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const { width, height } = dropZone.getBoundingClientRect();
+
+  canvas.width = Math.floor(width * dpr);
+  canvas.height = Math.floor(height * dpr);
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawScene();
+}
+
+function createRootNodeAt(worldX, worldY) {
+  const rootNode = createNode(worldX, worldY, ROOT_NODE_RADIUS, null, { isRoot: true });
+  topLevelNodes.push(rootNode);
+  focusedNode = rootNode;
+  layoutAllNodes();
+  appShell.classList.add('has-objects');
+  drawScene();
+  return rootNode;
+}
+
+function appendGlyphToNode(targetNode, glyphType) {
+  const glyph = glyphType === 'node'
+    ? createNode(targetNode.x, targetNode.y, getScaledValue(targetNode, CHILD_RADIUS_RATIO), targetNode.guid)
+    : createGlyph(glyphType, targetNode.guid);
+
+  if (glyphType === 'value') {
+    glyph.ring = 'outer';
+    targetNode.outerGlyphs.push(glyph);
+  } else {
+    targetNode.glyphs.push(glyph);
+  }
+  layoutAllNodes();
+  drawScene();
+  return glyph;
+}
+
+function spawnGlyphAtDrop(glyphType, clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const worldPoint = screenToWorld(clientX - rect.left, clientY - rect.top);
+
+  if (topLevelNodes.length === 0 && glyphType === 'node') {
+    createRootNodeAt(worldPoint.x, worldPoint.y);
+    return;
+  }
+
+  if (topLevelNodes.length === 0) {
+    const rootNode = createRootNodeAt(worldPoint.x, worldPoint.y);
+    appendGlyphToNode(rootNode, glyphType);
+    return;
+  }
+
+  const targetNode = findDropTarget(worldPoint.x, worldPoint.y) || topLevelNodes[0];
+  appendGlyphToNode(targetNode, glyphType);
+}
+
+function recenterCanvas() {
+  camera.x = 0;
+  camera.y = 0;
+  camera.zoom = 1;
+  drawScene();
+}
+
+function zoomAtPoint(nextZoom, screenX, screenY) {
+  const clampedZoom = Math.max(MIN_ZOOM, nextZoom);
+  const beforeZoomPoint = screenToWorld(screenX, screenY);
+
+  camera.zoom = clampedZoom;
+
+  const { width, height } = getViewportSize();
+  camera.x = beforeZoomPoint.x - (screenX - width / 2) / camera.zoom;
+  camera.y = beforeZoomPoint.y - (screenY - height / 2) / camera.zoom;
+  drawScene();
+}
+
+function stopPanning(pointerId) {
+  if (panState.pointerId !== pointerId) {
+    return;
+  }
+
+  panState.active = false;
+  panState.pointerId = null;
+}
+
+glyphCards.forEach((card) => {
+  card.addEventListener('dragstart', (event) => {
+    event.dataTransfer.setData('application/x-magi-object', card.dataset.objectType || 'node');
+    event.dataTransfer.effectAllowed = 'copy';
+  });
+
+  card.addEventListener('mouseenter', (event) => {
+    showTooltip(card.dataset.name || '', card.dataset.description || '', event.clientX, event.clientY);
+  });
+
+  card.addEventListener('mousemove', (event) => {
+    moveTooltip(event.clientX, event.clientY);
+  });
+
+  card.addEventListener('mouseleave', () => {
+    hideTooltip();
+  });
+
+  card.addEventListener('focus', () => {
+    const rect = card.getBoundingClientRect();
+    showTooltip(card.dataset.name || '', card.dataset.description || '', rect.right, rect.top);
+  });
+
+  card.addEventListener('blur', () => {
+    hideTooltip();
+  });
+});
+
+trayToggle.addEventListener('click', () => {
+  appShell.classList.toggle('tray-collapsed');
+  const isCollapsed = appShell.classList.contains('tray-collapsed');
+  trayToggle.textContent = isCollapsed ? '' : '❮';
+  window.setTimeout(resizeCanvas, 190);
+});
+
+recenterCanvasButton.addEventListener('click', () => {
+  recenterCanvas();
+});
+
+playProgramButton.addEventListener('click', () => {
+  playProgram();
+});
+
+saveProgramButton?.addEventListener('click', async () => {
+  const program = serializeProgram();
+  const api = window.SpellcircleFile;
+  if (!api?.save) {
+    console.warn('Save is unavailable: preload API missing.');
+    return;
+  }
+
+  try {
+    await api.save(program);
+  } catch (error) {
+    console.error('Save failed:', error);
+  }
+});
+
+loadProgramButton?.addEventListener('click', async () => {
+  const api = window.SpellcircleFile;
+  if (!api?.load) {
+    console.warn('Load is unavailable: preload API missing.');
+    return;
+  }
+
+  try {
+    const result = await api.load();
+    if (!result || result.canceled) {
+      return;
+    }
+
+    const ok = window.confirm('This will delete the current script and load a new one. Continue?');
+    if (!ok) {
+      return;
+    }
+
+    const success = deserializeProgram(result.program);
+    if (!success) {
+      window.alert('Unable to load script: invalid or unsupported file.');
+    }
+  } catch (error) {
+    console.error('Load failed:', error);
+  }
+});
+
+lineToolToggle.addEventListener('click', () => {
+  lineToolEnabled = !lineToolEnabled;
+  lineToolToggle.setAttribute('aria-pressed', String(lineToolEnabled));
+  drawScene();
+});
+
+variableModalAccept.addEventListener('click', () => {
+  closeVariableModal(true);
+});
+
+variableModalCancel.addEventListener('click', () => {
+  closeVariableModal(false);
+});
+
+variableModalBackdrop.addEventListener('click', (event) => {
+  if (event.target === variableModalBackdrop) {
+    closeVariableModal(false);
+  }
+});
+
+referenceModalAccept.addEventListener('click', () => {
+  closeReferenceModal(true);
+});
+
+referenceModalCancel.addEventListener('click', () => {
+  closeReferenceModal(false);
+});
+
+referenceModalBackdrop.addEventListener('click', (event) => {
+  if (event.target === referenceModalBackdrop) {
+    closeReferenceModal(false);
+  }
+});
+
+deleteModalConfirm.addEventListener('click', () => {
+  closeDeleteModal(true);
+});
+
+deleteModalCancel.addEventListener('click', () => {
+  closeDeleteModal(false);
+});
+
+deleteModalBackdrop.addEventListener('click', (event) => {
+  if (event.target === deleteModalBackdrop) {
+    closeDeleteModal(false);
+  }
+});
+
+variableModalInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    closeVariableModal(true);
+  }
+
+  if (event.key === 'Escape') {
+    closeVariableModal(false);
+  }
+});
+
+canvas.addEventListener('pointerdown', (event) => {
+  if (
+    event.button !== 0
+    || variableModalBackdrop.classList.contains('is-visible')
+    || referenceModalBackdrop.classList.contains('is-visible')
+    || deleteModalBackdrop.classList.contains('is-visible')
+  ) {
+    return;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const worldPoint = screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
+
+  if (lineToolEnabled) {
+    const wireStartTarget = findLineToolStartTarget(worldPoint.x, worldPoint.y);
+    if (wireStartTarget) {
+      disconnectOutgoing(wireStartTarget.fromGlyph);
+      startWireDrag(
+        wireStartTarget.node,
+        wireStartTarget.fromGuid,
+        wireStartTarget.fromPoint,
+        event.pointerId,
+        worldPoint.x,
+        worldPoint.y,
+      );
+      canvas.setPointerCapture(event.pointerId);
+      drawScene();
+      return;
+    }
+  }
+
+  let connectorTarget = null;
+  for (let index = topLevelNodes.length - 1; index >= 0; index -= 1) {
+    connectorTarget = findConnectorTarget(topLevelNodes[index], worldPoint.x, worldPoint.y);
+    if (connectorTarget) {
+      break;
+    }
+  }
+
+  if (connectorTarget) {
+    panState.active = true;
+    panState.moved = false;
+    panState.pointerId = event.pointerId;
+    panState.lastX = event.clientX;
+    panState.lastY = event.clientY;
+    canvas.setPointerCapture(event.pointerId);
+    return;
+  }
+
+  const draggableGlyph = findCanvasGlyph(worldPoint.x, worldPoint.y, (glyph) => glyph.type !== 'start');
+  if (draggableGlyph) {
+    dragState.active = true;
+    dragState.moved = false;
+    dragState.pointerId = event.pointerId;
+    dragState.glyph = draggableGlyph;
+    dragState.sourceNode = findNodeByGuid(draggableGlyph.parentNodeGuid);
+    panState.lastX = event.clientX;
+    panState.lastY = event.clientY;
+    dragState.worldX = draggableGlyph.x;
+    dragState.worldY = draggableGlyph.y;
+    canvas.setPointerCapture(event.pointerId);
+    canvas.classList.remove('is-connector-hover');
+    hideTooltip();
+    drawScene();
+    return;
+  }
+
+  panState.active = true;
+  panState.moved = false;
+  panState.pointerId = event.pointerId;
+  panState.lastX = event.clientX;
+  panState.lastY = event.clientY;
+  canvas.setPointerCapture(event.pointerId);
+});
+
+canvas.addEventListener('pointermove', (event) => {
+  if (wireDragState.active && wireDragState.pointerId === event.pointerId) {
+    const rect = canvas.getBoundingClientRect();
+    const worldPoint = screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
+    wireDragState.toWorld = { x: worldPoint.x, y: worldPoint.y };
+    drawScene();
+    return;
+  }
+
+  if (dragState.active && dragState.pointerId === event.pointerId) {
+    const deltaX = event.clientX - panState.lastX;
+    const deltaY = event.clientY - panState.lastY;
+
+    if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
+      dragState.moved = true;
+    }
+
+    panState.lastX = event.clientX;
+    panState.lastY = event.clientY;
+    const rect = canvas.getBoundingClientRect();
+    const worldPoint = screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
+    dragState.worldX = worldPoint.x;
+    dragState.worldY = worldPoint.y;
+    drawScene();
+    return;
+  }
+
+  if (!panState.active || panState.pointerId !== event.pointerId) {
+    updateCanvasHover(event.clientX, event.clientY);
+    return;
+  }
+
+  const deltaX = event.clientX - panState.lastX;
+  const deltaY = event.clientY - panState.lastY;
+
+  if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
+    panState.moved = true;
+  }
+
+  camera.x -= deltaX / camera.zoom;
+  camera.y -= deltaY / camera.zoom;
+  panState.lastX = event.clientX;
+  panState.lastY = event.clientY;
+  drawScene();
+});
+
+canvas.addEventListener('pointerup', (event) => {
+  if (wireDragState.active && wireDragState.pointerId === event.pointerId) {
+    finishWireDrag(event.clientX, event.clientY);
+    return;
+  }
+
+  if (dragState.active && dragState.pointerId === event.pointerId) {
+    const rect = canvas.getBoundingClientRect();
+    const worldPoint = screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
+
+    if (dragState.moved) {
+      finishGlyphDrag(worldPoint.x, worldPoint.y);
+    } else if (dragState.glyph?.type === 'variable') {
+      openVariableModal(dragState.glyph);
+    } else if (dragState.glyph?.type === 'reference') {
+      openReferenceModal(dragState.glyph);
+    } else if (dragState.glyph?.type === 'value') {
+      openValueDropdown(dragState.glyph, event.clientX, event.clientY);
+    }
+
+    clearGlyphDrag();
+    drawScene();
+    updateCanvasHover(event.clientX, event.clientY);
+    return;
+  }
+
+  if (!panState.moved) {
+    const rect = canvas.getBoundingClientRect();
+    const worldPoint = screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
+
+    for (let index = topLevelNodes.length - 1; index >= 0; index -= 1) {
+      const connectorTarget = findConnectorTarget(topLevelNodes[index], worldPoint.x, worldPoint.y);
+      if (connectorTarget) {
+        focusNode(connectorTarget);
+        stopPanning(event.pointerId);
+        updateCanvasHover(event.clientX, event.clientY);
+        return;
+      }
+    }
+
+    const editableGlyph = findCanvasGlyph(
+      worldPoint.x,
+      worldPoint.y,
+      (glyph) => glyph.type === 'variable' || glyph.type === 'reference',
+    );
+
+    if (editableGlyph?.type === 'variable') {
+      openVariableModal(editableGlyph);
+    } else if (editableGlyph?.type === 'reference') {
+      openReferenceModal(editableGlyph);
+    }
+  }
+
+  stopPanning(event.pointerId);
+  updateCanvasHover(event.clientX, event.clientY);
+});
+
+window.addEventListener('pointerup', (event) => {
+  if (wireDragState.active && wireDragState.pointerId === event.pointerId) {
+    finishWireDrag(event.clientX, event.clientY);
+  }
+});
+
+canvas.addEventListener('pointercancel', (event) => {
+  if (wireDragState.active && wireDragState.pointerId === event.pointerId) {
+    clearWireDrag();
+    drawScene();
+  }
+
+  if (dragState.active && dragState.pointerId === event.pointerId) {
+    clearGlyphDrag();
+    drawScene();
+  }
+
+  stopPanning(event.pointerId);
+  canvas.classList.remove('is-connector-hover');
+  hideTooltip();
+});
+
+canvas.addEventListener('pointerleave', () => {
+  canvas.classList.remove('is-connector-hover');
+  hideTooltip();
+});
+
+canvas.addEventListener('wheel', (event) => {
+  event.preventDefault();
+
+  const rect = canvas.getBoundingClientRect();
+  const pointerX = event.clientX - rect.left;
+  const pointerY = event.clientY - rect.top;
+  const zoomFactor = event.deltaY < 0 ? 1.1 : 0.9;
+  zoomAtPoint(camera.zoom * zoomFactor, pointerX, pointerY);
+}, { passive: false });
+
+['dragenter', 'dragover'].forEach((eventName) => {
+  dropZone.addEventListener(eventName, (event) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    dropZone.classList.add('is-dropping');
+  });
+});
+
+['dragleave', 'dragend'].forEach((eventName) => {
+  dropZone.addEventListener(eventName, () => {
+    dropZone.classList.remove('is-dropping');
+  });
+});
+
+dropZone.addEventListener('drop', (event) => {
+  event.preventDefault();
+  dropZone.classList.remove('is-dropping');
+
+  const objectType = event.dataTransfer.getData('application/x-magi-object');
+  if (objectType) {
+    spawnGlyphAtDrop(objectType, event.clientX, event.clientY);
+  }
+});
+
+window.addEventListener('resize', resizeCanvas);
+window.addEventListener('load', () => {
+  resizeCanvas();
+
+  if (topLevelNodes.length === 0) {
+    createRootNodeAt(0, 0);
+  }
+
+  setMessageLogCollapsed(true);
+  if (messageLogToggle) {
+    messageLogToggle.addEventListener('click', () => {
+      const nextCollapsed = messageLog?.dataset?.collapsed !== 'true';
+      setMessageLogCollapsed(nextCollapsed);
+    });
+  }
+
+  // Ensure tray toggle shows correct icon/label on startup
+  trayToggle.textContent = appShell.classList.contains('tray-collapsed') ? '' : '❮';
+
+  window.MagiScript = {
+    serializeProgram,
+    playProgram,
+  };
+});

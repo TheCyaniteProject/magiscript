@@ -1,0 +1,12 @@
+{
+  "name": "magiscript",
+  "version": "1.0.0",
+  "description": "A small Electron fantasy canvas prototype",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^35.0.0"
+  }
+}
