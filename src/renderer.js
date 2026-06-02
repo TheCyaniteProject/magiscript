@@ -19,6 +19,17 @@ const referenceModalBackdrop = document.getElementById('referenceModalBackdrop')
 const referenceModalSelect = document.getElementById('referenceModalSelect');
 const referenceModalAccept = document.getElementById('referenceModalAccept');
 const referenceModalCancel = document.getElementById('referenceModalCancel');
+const booleanModalBackdrop = document.getElementById('booleanModalBackdrop');
+const booleanModalOperatorField = document.getElementById('booleanModalOperatorField');
+const booleanModalOperatorSelect = document.getElementById('booleanModalOperatorSelect');
+const booleanModalCheckboxField = document.getElementById('booleanModalCheckboxField');
+const booleanModalCheckbox = document.getElementById('booleanModalCheckbox');
+const booleanModalAccept = document.getElementById('booleanModalAccept');
+const booleanModalCancel = document.getElementById('booleanModalCancel');
+const ifElseModalBackdrop = document.getElementById('ifElseModalBackdrop');
+const ifElseModalModeSelect = document.getElementById('ifElseModalModeSelect');
+const ifElseModalAccept = document.getElementById('ifElseModalAccept');
+const ifElseModalCancel = document.getElementById('ifElseModalCancel');
 const deleteModalBackdrop = document.getElementById('deleteModalBackdrop');
 const deleteModalConfirm = document.getElementById('deleteModalConfirm');
 const deleteModalCancel = document.getElementById('deleteModalCancel');
@@ -32,8 +43,11 @@ let focusedNode = null;
 let activeVariableGlyph = null;
 let activeReferenceGlyph = null;
 let activeValueGlyph = null;
+let activeBooleanGlyph = null;
+let activeIfElseGlyph = null;
 let activeValueDropdown = null;
 let hoverCanvasGlyphGuid = null;
+let hoverIfElseGlyphGuid = null;
 let pendingDelete = null;
 let variableCount = 0;
 let lineToolEnabled = false;
@@ -44,6 +58,7 @@ const wireDragState = {
   pointerId: null,
   node: null,
   fromGuid: null,
+  fromOutputIndex: 0,
   fromPoint: null,
   toWorld: null,
 };
@@ -75,6 +90,11 @@ const dragState = {
 const GRID_MINOR_STEP = 24;
 const GRID_MAJOR_STEP = 96;
 const MIN_ZOOM = 0.35;
+
+// Glyph font configuration — adjust these to change glyph text appearance.
+// Matches: font-family: "Mr De Haviland", cursive;
+const GLYPH_FONT_FAMILY = '"Mr De Haviland", cursive';
+const GLYPH_FONT_WEIGHT = '400';
 
 const ROOT_NODE_RADIUS = 192;
 const CHILD_BASE_RADIUS = 33.6;
@@ -120,6 +140,138 @@ function getGlyphShortLabel(value, fallback) {
   return normalized.slice(0, 4).toUpperCase();
 }
 
+function isOuterParamGlyphType(type) {
+  return type === 'variable' || type === 'reference' || type === 'value' || type === 'boolean';
+}
+
+function isOwnedBooleanGlyph(glyph) {
+  return glyph?.type === 'boolean' && Boolean(glyph.ownerIfGlyphGuid);
+}
+
+function isOwnedBooleanVisible(glyph) {
+  return isOwnedBooleanGlyph(glyph) && hoverIfElseGlyphGuid === glyph.ownerIfGlyphGuid;
+}
+
+function getOwnedBooleans(ifGlyph, node = null) {
+  const ownerNode = node || (ifGlyph?.parentNodeGuid ? findNodeByGuid(ifGlyph.parentNodeGuid) : null);
+  if (!ownerNode) {
+    return [];
+  }
+
+  return ownerNode.glyphs.filter((glyph) => glyph.type === 'boolean' && glyph.ownerIfGlyphGuid === ifGlyph.guid);
+}
+
+function getLayoutGlyphs(node) {
+  return node.glyphs.filter((glyph) => !isOwnedBooleanGlyph(glyph));
+}
+
+function getIfElseBooleanLabelOffsets(ifGlyph, glyphScale = 1) {
+  const radius = ifGlyph.radius * glyphScale;
+  return [
+    { x: 0, y: -radius * 0.26 },
+    { x: -radius * 0.3, y: radius * 0.2 },
+    { x: radius * 0.3, y: radius * 0.2 },
+  ];
+}
+
+function getIfElseBooleanCornerOffsets(ifGlyph) {
+  return [
+    { x: 0, y: -ifGlyph.radius },
+    { x: -ifGlyph.radius * 0.88, y: ifGlyph.radius * 0.7 },
+    { x: ifGlyph.radius * 0.88, y: ifGlyph.radius * 0.7 },
+  ];
+}
+
+function layoutOwnedBooleans(ifGlyph) {
+  const ownerNode = ifGlyph.parentNodeGuid ? findNodeByGuid(ifGlyph.parentNodeGuid) : null;
+  if (!ownerNode) {
+    return;
+  }
+
+  const ownedBooleans = getOwnedBooleans(ifGlyph, ownerNode);
+  const offsets = getIfElseBooleanCornerOffsets(ifGlyph);
+
+  ownedBooleans.forEach((glyph, index) => {
+    const offset = offsets[index] || offsets[offsets.length - 1];
+    glyph.x = ifGlyph.x + offset.x;
+    glyph.y = ifGlyph.y + offset.y;
+    glyph.radius = ifGlyph.radius * 0.75;
+    glyph.lineWidth = ifGlyph.lineWidth;
+    glyph.ring = 'inner';
+  });
+}
+
+function createOutputKey(guid, outputIndex = 0) {
+  return `${guid}:${outputIndex}`;
+}
+
+function parseOutputKey(outputKey) {
+  const [guid, outputIndexText] = String(outputKey).split(':');
+  return {
+    guid,
+    outputIndex: Number.parseInt(outputIndexText ?? '0', 10) || 0,
+  };
+}
+
+function getGlyphOutputTarget(glyph, outputIndex = 0) {
+  if (outputIndex === 1 && glyph.type === 'ifelse') {
+    return glyph.nextGlyphGuidFalse ?? null;
+  }
+
+  return glyph.nextGlyphGuid ?? null;
+}
+
+function getIfElseModeLabel(mode) {
+  return mode === 'or' ? 'OR' : 'AND';
+}
+
+function getBooleanOperatorLabel(operation) {
+  switch (operation) {
+    case 'less':
+      return 'LT';
+    case 'greater':
+      return 'GT';
+    case 'equal':
+      return 'EQ';
+    case 'not-equal':
+      return 'NE';
+    default:
+      return 'EQ';
+  }
+}
+
+function normalizeBooleanOperation(operation) {
+  switch (operation) {
+    case 'less':
+    case 'greater':
+    case 'equal':
+    case 'not-equal':
+      return operation;
+    default:
+      return 'equal';
+  }
+}
+
+function getBooleanGlyphLabel(glyph) {
+  if (glyph.ring === 'outer') {
+    return glyph.checked ? 'TR' : 'FA';
+  }
+
+  return getBooleanOperatorLabel(glyph.operation);
+}
+
+function getReferenceableGlyphLabel(glyph) {
+  if (glyph.type === 'variable') {
+    return glyph.name;
+  }
+
+  if (glyph.type === 'boolean') {
+    return `Boolean ${getBooleanGlyphLabel(glyph)}`;
+  }
+
+  return glyph.type;
+}
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll('&', '&amp;')
@@ -149,6 +301,7 @@ function hideTooltip() {
   hoverTooltip.classList.remove('is-visible');
   hoverTooltip.setAttribute('aria-hidden', 'true');
   hoverCanvasGlyphGuid = null;
+  hoverIfElseGlyphGuid = null;
 }
 
 function moveTooltip(clientX, clientY) {
@@ -302,13 +455,19 @@ function createGlyph(type, parentNodeGuid) {
     case 'output':
       glyph = new OutputGlyph({ guid, parentNodeGuid });
       break;
+    case 'boolean':
+      glyph = new BooleanGlyph({ guid, parentNodeGuid, operation: 'equal', checked: false });
+      break;
+    case 'ifelse':
+      glyph = new IfElseGlyph({ guid, parentNodeGuid, mode: 'and', nextGlyphGuidFalse: null });
+      break;
     default:
       glyph = new Glyph({ guid, type, parentNodeGuid });
       break;
   }
 
   glyph.nextGlyphGuid = null;
-  glyph.nextGlyphGuidIsAuto = true;
+  glyph.nextGlyphGuidIsAuto = false;
   glyph.x = 0;
   glyph.y = 0;
   glyph.radius = CHILD_BASE_RADIUS;
@@ -335,7 +494,6 @@ function createNode(x, y, radius, parentNodeGuid = null, options = {}) {
      const defaultVariable = createGlyph('variable', node.guid);
      defaultVariable.ring = 'outer';
       defaultVariable.name = 'IN';
-      connectOutgoing(defaultVariable, node.startGlyph.guid);
      node.outerGlyphs.push(defaultVariable);
   } else {
     const defaultValue = createGlyph('value', node.guid);
@@ -353,18 +511,12 @@ function isNode(item) {
 }
 
 function getExecutableSequence(node) {
-  return [node.startGlyph, ...node.glyphs];
+  return [node.startGlyph, ...getLayoutGlyphs(node)];
 }
 
 function updateNodeOrdering(node) {
-  const sequence = getExecutableSequence(node);
-
-  sequence.forEach((item, index) => {
+  getExecutableSequence(node).forEach((item) => {
     item.parentNodeGuid = node.guid;
-    const defaultNext = sequence[index + 1]?.guid ?? null;
-    if (item.nextGlyphGuidIsAuto) {
-      item.nextGlyphGuid = defaultNext;
-    }
   });
 
   node.glyphs.forEach((glyph) => {
@@ -403,12 +555,13 @@ function getChildRadiusForNode(node, slotCount) {
 function layoutNode(node) {
   updateNodeOrdering(node);
 
-  if (node.glyphs.length === 0 && node.outerGlyphs.length === 0) {
+  if (getLayoutGlyphs(node).length === 0 && node.outerGlyphs.length === 0) {
     node.layout = null;
     return;
   }
 
-  const maxGlyphCount = Math.max(node.glyphs.length, node.outerGlyphs.length);
+  const layoutGlyphs = getLayoutGlyphs(node);
+  const maxGlyphCount = Math.max(layoutGlyphs.length, node.outerGlyphs.length);
   const slotCount = maxGlyphCount + 1;
   const glyphRadius = getChildRadiusForNode(node, slotCount);
   const borderGap = getScaledValue(node, GROUP_CHILD_BORDER_GAP_RATIO);
@@ -428,8 +581,8 @@ function layoutNode(node) {
   node.startGlyph.radius = glyphRadius;
   node.startGlyph.lineWidth = lineWidth;
 
-  node.glyphs.forEach((glyph, index) => {
-    const angle = START_ANGLE + ((index + 1) * Math.PI * 2) / (node.glyphs.length + 1);
+  layoutGlyphs.forEach((glyph, index) => {
+    const angle = START_ANGLE + ((index + 1) * Math.PI * 2) / (layoutGlyphs.length + 1);
 
     glyph.x = node.x + orbitRadius * Math.cos(angle);
     glyph.y = node.y + orbitRadius * Math.sin(angle);
@@ -440,9 +593,13 @@ function layoutNode(node) {
     if (isNode(glyph)) {
       layoutNode(glyph);
     }
+
+    if (glyph.type === 'ifelse') {
+      layoutOwnedBooleans(glyph);
+    }
   });
 
-  const innerGlyphByGuid = new Map([node.startGlyph, ...node.glyphs].map((glyph) => [glyph.guid, glyph]));
+  const innerGlyphByGuid = new Map([node.startGlyph, ...layoutGlyphs, ...node.glyphs.filter(isOwnedBooleanGlyph)].map((glyph) => [glyph.guid, glyph]));
   const pinnedGroups = new Map();
   const unpinnedOuterGlyphs = [];
 
@@ -622,7 +779,7 @@ function drawStartGlyph(startGlyph) {
   context.stroke();
   context.shadowBlur = 0;
   context.fillStyle = '#17120b';
-  context.font = `${startGlyph.radius * 0.95}px Georgia`;
+  context.font = `${GLYPH_FONT_WEIGHT} ${startGlyph.radius * 0.95}px ${GLYPH_FONT_FAMILY}`;
   context.textAlign = 'center';
   context.textBaseline = 'middle';
   context.fillText('S', startGlyph.x, startGlyph.y + startGlyph.radius * 0.04);
@@ -662,9 +819,29 @@ function drawPolygonGlyph(glyph, sides, rotation = 0, fill = null) {
   context.stroke();
 }
 
+function drawStarGlyph(glyph, points, innerRadiusRatio = 0.46, rotation = -Math.PI / 2) {
+  context.beginPath();
+
+  for (let index = 0; index < points * 2; index += 1) {
+    const angle = rotation + (Math.PI * index) / points;
+    const radius = index % 2 === 0 ? glyph.radius : glyph.radius * innerRadiusRatio;
+    const x = glyph.x + radius * Math.cos(angle);
+    const y = glyph.y + radius * Math.sin(angle);
+
+    if (index === 0) {
+      context.moveTo(x, y);
+    } else {
+      context.lineTo(x, y);
+    }
+  }
+
+  context.closePath();
+  context.stroke();
+}
+
 function drawTextGlyph(glyph, text, fontScale = 0.95) {
   context.fillStyle = '#17120b';
-  context.font = `${glyph.radius * fontScale}px Georgia`;
+  context.font = `${GLYPH_FONT_WEIGHT} ${glyph.radius * fontScale}px ${GLYPH_FONT_FAMILY}`;
   context.textAlign = 'center';
   context.textBaseline = 'middle';
   context.fillText(text, glyph.x, glyph.y + glyph.radius * 0.04);
@@ -735,7 +912,12 @@ function drawReferenceGlyph(glyph) {
   drawPolygonGlyph(glyph, 6, Math.PI / 6);
   context.shadowBlur = 0;
   context.setLineDash([]);
-  drawTextGlyph(glyph, getGlyphShortLabel(referenceTarget?.name, 'REF'), 0.42);
+  const referenceLabel = referenceTarget
+    ? (referenceTarget.type === 'boolean'
+      ? getBooleanGlyphLabel(referenceTarget)
+      : getGlyphShortLabel(referenceTarget.name, 'REF'))
+    : 'REF';
+  drawTextGlyph(glyph, referenceLabel, 0.42);
   context.restore();
 }
 
@@ -787,6 +969,68 @@ function drawOutputGlyph(glyph) {
   context.restore();
 }
 
+function drawBooleanGlyph(glyph) {
+  if (isOwnedBooleanGlyph(glyph) && !isOwnedBooleanVisible(glyph)) {
+    return;
+  }
+
+  const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
+  const textRadius = isOwnedBooleanVisible(glyph) && glyph.radius > 0
+    ? glyph.radius / 0.75
+    : glyph.radius;
+
+  context.save();
+  applyCameraTransform();
+  context.lineWidth = glyph.lineWidth;
+  context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
+  context.strokeStyle = '#17120b';
+  if (glyph.ring === 'outer') {
+    context.setLineDash([glyph.lineWidth * 11, glyph.lineWidth * 9]);
+  }
+  context.shadowColor = 'rgba(23, 18, 11, 0.12)';
+  context.shadowBlur = 8 * glyph.radius / CHILD_BASE_RADIUS;
+  drawStarGlyph(glyph, 7, 0.8, -Math.PI / 2);
+  context.shadowBlur = 0;
+  context.setLineDash([]);
+  drawTextGlyph({ ...glyph, radius: textRadius }, getBooleanGlyphLabel(glyph), 0.4);
+  context.restore();
+}
+
+function drawIfElseGlyph(glyph) {
+  const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
+  const isHoveredGlyph = hoverIfElseGlyphGuid === glyph.guid;
+  const ownedBooleans = getOwnedBooleans(glyph);
+  const labelOffsets = getIfElseBooleanLabelOffsets(glyph, 0.72);
+
+  context.save();
+  applyCameraTransform();
+  context.lineWidth = glyph.lineWidth;
+  context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
+  context.strokeStyle = '#17120b';
+  context.shadowColor = 'rgba(23, 18, 11, 0.12)';
+  context.shadowBlur = 8 * glyph.radius / CHILD_BASE_RADIUS;
+  context.beginPath();
+  context.moveTo(glyph.x, glyph.y - glyph.radius);
+  context.lineTo(glyph.x + glyph.radius * 0.88, glyph.y + glyph.radius * 0.7);
+  context.lineTo(glyph.x - glyph.radius * 0.88, glyph.y + glyph.radius * 0.7);
+  context.closePath();
+  context.stroke();
+  context.shadowBlur = 0;
+  if (isHoveredGlyph) {
+    drawTextGlyph(glyph, 'IF', 0.42);
+  } else {
+    ownedBooleans.forEach((booleanGlyph, index) => {
+      const offset = labelOffsets[index] || labelOffsets[labelOffsets.length - 1];
+      context.fillStyle = '#17120b';
+      context.font = `${GLYPH_FONT_WEIGHT} ${glyph.radius * 0.24}px ${GLYPH_FONT_FAMILY}`;
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText(getBooleanGlyphLabel(booleanGlyph), glyph.x + offset.x, glyph.y + offset.y);
+    });
+  }
+  context.restore();
+}
+
 function drawGlyph(glyph, ancestorLineToolActive = true) {
   switch (glyph.type) {
     case 'node':
@@ -807,6 +1051,12 @@ function drawGlyph(glyph, ancestorLineToolActive = true) {
       break;
     case 'output':
       drawOutputGlyph(glyph);
+      break;
+    case 'boolean':
+      drawBooleanGlyph(glyph);
+      break;
+    case 'ifelse':
+      drawIfElseGlyph(glyph);
       break;
     default:
       break;
@@ -995,6 +1245,8 @@ function drawNodeConnections(node, nodeLineToolActive) {
       context.strokeStyle = 'rgba(205, 125, 28, 0.8)';
     } else if (kind === 'outer-output') {
       context.strokeStyle = 'rgba(205, 125, 28, 0.8)';
+    } else if (kind === 'secondary-output') {
+      context.strokeStyle = 'rgba(23, 18, 11, 0.9)';
     } else if (kind === 'output') {
       context.strokeStyle = 'rgba(160, 35, 35, 0.8)';
     } else {
@@ -1020,7 +1272,8 @@ function drawNodeConnections(node, nodeLineToolActive) {
 
   const circleOffset = Math.max(node.lineWidth * 2.6, node.radius * 0.03);
   const circleRadius = Math.max(node.lineWidth * 2.3, node.radius * 0.036);
-  const ringGlyphs = [...execGlyphs, ...node.outerGlyphs];
+  const ownedBooleans = node.glyphs.filter(isOwnedBooleanGlyph);
+  const ringGlyphs = [...execGlyphs, ...node.outerGlyphs, ...ownedBooleans];
 
   const glyphByGuid = new Map(ringGlyphs.map((glyph) => [glyph.guid, glyph]));
   const inputSourceByTarget = new Map();
@@ -1029,24 +1282,29 @@ function drawNodeConnections(node, nodeLineToolActive) {
 
   execGlyphs.forEach((glyph) => {
     if (glyph.nextGlyphGuid) {
-      outputTargetBySource.set(glyph.guid, glyph.nextGlyphGuid);
+      outputTargetBySource.set(createOutputKey(glyph.guid, 0), glyph.nextGlyphGuid);
       inputSourceByTarget.set(glyph.nextGlyphGuid, glyph.guid);
+    }
+
+    if (glyph.type === 'ifelse' && glyph.nextGlyphGuidFalse) {
+      outputTargetBySource.set(createOutputKey(glyph.guid, 1), glyph.nextGlyphGuidFalse);
+      inputSourceByTarget.set(glyph.nextGlyphGuidFalse, glyph.guid);
     }
   });
 
   node.outerGlyphs.forEach((glyph) => {
     if (glyph.nextGlyphGuid) {
-      outputTargetBySource.set(glyph.guid, glyph.nextGlyphGuid);
+      outputTargetBySource.set(createOutputKey(glyph.guid, 0), glyph.nextGlyphGuid);
       paramSourceByTarget.set(glyph.nextGlyphGuid, glyph.guid);
     }
   });
 
   ringGlyphs.forEach((glyph) => {
-    const isOuterDataGlyph = glyph.ring === 'outer'
-      && (glyph.type === 'variable' || glyph.type === 'reference' || glyph.type === 'value');
+    const isOuterDataGlyph = glyph.ring === 'outer' && isOuterParamGlyphType(glyph.type);
+    const isOwnedBoolean = isOwnedBooleanGlyph(glyph);
 
     const inputSourceGuid = inputSourceByTarget.get(glyph.guid) || null;
-    const outputTargetGuid = outputTargetBySource.get(glyph.guid) || null;
+    const outputTargetGuid = outputTargetBySource.get(createOutputKey(glyph.guid, 0)) || null;
     const paramSourceGuid = paramSourceByTarget.get(glyph.guid) || null;
 
     const inputSource = inputSourceGuid ? glyphByGuid.get(inputSourceGuid) : null;
@@ -1055,10 +1313,19 @@ function drawNodeConnections(node, nodeLineToolActive) {
 
     const showAllIO = nodeLineToolActive;
     const hasInputConnection = Boolean(inputSourceGuid);
-    const hasOutputConnection = Boolean(outputTargetGuid);
+    const hasOutputConnection = Boolean(outputTargetGuid)
+      || Boolean(outputTargetBySource.get(createOutputKey(glyph.guid, 1)));
     const hasParamConnection = Boolean(paramSourceGuid);
-    const allowParam = glyph.type === 'node' || glyph.type === 'add' || glyph.type === 'subtract';
+    const allowParam = glyph.type === 'node'
+      || glyph.type === 'add'
+      || glyph.type === 'subtract'
+      || glyph.type === 'boolean'
+      || glyph.type === 'ifelse';
     const resolvedInputSource = glyph.type === 'start' ? (paramSource || inputSource) : inputSource;
+    const outputAngles = glyph.type === 'ifelse'
+      ? [Math.PI / 2 - 0.48, Math.PI / 2 + 0.48]
+      : null;
+    const isOuterBooleanGlyph = glyph.type === 'boolean' && glyph.ring === 'outer';
 
     glyph.updateIOLayout({
       inputSource: resolvedInputSource,
@@ -1066,9 +1333,13 @@ function drawNodeConnections(node, nodeLineToolActive) {
       paramSource,
       circleOffset,
       circleRadius,
-      allowInput: !isOuterDataGlyph && (showAllIO || hasInputConnection || (glyph.type === 'start' && hasParamConnection)),
-      allowOutput: showAllIO || hasOutputConnection,
-      allowParam: allowParam && (showAllIO || hasParamConnection),
+      allowInput: !isOuterDataGlyph
+        && !isOwnedBoolean
+        && !isOuterBooleanGlyph
+        && (showAllIO || hasInputConnection || (glyph.type === 'start' && hasParamConnection)),
+      allowOutput: !isOwnedBoolean && (showAllIO || hasOutputConnection),
+      allowParam: !isOwnedBoolean && !isOuterBooleanGlyph && allowParam && (showAllIO || hasParamConnection),
+      outputAngles,
     });
   });
 
@@ -1077,6 +1348,10 @@ function drawNodeConnections(node, nodeLineToolActive) {
       return;
     }
 
+    context.save();
+    if ((fromPoint.outputIndex ?? 0) === 1) {
+      context.strokeStyle = 'rgba(23, 18, 11, 0.9)';
+    }
     context.beginPath();
     context.lineWidth = node.lineWidth * 0.9;
     context.moveTo(fromPoint.x, fromPoint.y);
@@ -1084,28 +1359,35 @@ function drawNodeConnections(node, nodeLineToolActive) {
     context.stroke();
     drawMidArrow(fromPoint.x, fromPoint.y, toPoint.x, toPoint.y);
     drawEndSquare(toPoint.x, toPoint.y);
+    context.restore();
 
     if (nodeLineToolActive && fromGlyph?.guid) {
       if (fromPoint.kind === 'output') {
-        outputPoints.set(fromGlyph.guid, fromPoint);
+        outputPoints.set(createOutputKey(fromGlyph.guid, fromPoint.outputIndex ?? 0), fromPoint);
       }
       if (kind === 'normal') {
         inputPoints.set(toPoint.ownerGuid, toPoint);
       } else {
         paramInputPoints.set(toPoint.ownerGuid, toPoint);
       }
-      outgoingLineEndSquares.set(fromGlyph.guid, { x: toPoint.x, y: toPoint.y });
+      outgoingLineEndSquares.set(createOutputKey(fromGlyph.guid, fromPoint.outputIndex ?? 0), { x: toPoint.x, y: toPoint.y });
     }
   };
 
   execGlyphs.forEach((glyph) => {
-    const targetGuid = outputTargetBySource.get(glyph.guid);
+    const targetGuid = outputTargetBySource.get(createOutputKey(glyph.guid, 0));
     const targetGlyph = targetGuid ? glyphByGuid.get(targetGuid) : null;
-    if (!targetGlyph) {
-      return;
+    if (targetGlyph) {
+      drawConnectionLine(glyph, glyph.io?.output, targetGlyph.io?.input, 'normal');
     }
 
-    drawConnectionLine(glyph, glyph.io?.output, targetGlyph.io?.input, 'normal');
+    if (glyph.type === 'ifelse') {
+      const falseTargetGuid = outputTargetBySource.get(createOutputKey(glyph.guid, 1));
+      const falseTargetGlyph = falseTargetGuid ? glyphByGuid.get(falseTargetGuid) : null;
+      if (falseTargetGlyph && glyph.io?.outputs?.[1]) {
+        drawConnectionLine(glyph, glyph.io.outputs[1], falseTargetGlyph.io?.input, 'normal');
+      }
+    }
   });
 
   node.outerGlyphs.forEach((glyph) => {
@@ -1124,8 +1406,7 @@ function drawNodeConnections(node, nodeLineToolActive) {
   });
 
   ringGlyphs.forEach((glyph) => {
-      const isOuterDataGlyph = glyph.ring === 'outer'
-        && (glyph.type === 'variable' || glyph.type === 'reference' || glyph.type === 'value');
+      const isOuterDataGlyph = glyph.ring === 'outer' && isOuterParamGlyphType(glyph.type);
 
       const isConnectedInput = Boolean(inputSourceByTarget.get(glyph.guid));
       const isConnectedOutput = Boolean(outputTargetBySource.get(glyph.guid));
@@ -1155,17 +1436,23 @@ function drawNodeConnections(node, nodeLineToolActive) {
         }
       }
 
-      if (glyph.io?.output) {
+      const outputConnectors = glyph.io?.outputs?.length ? glyph.io.outputs : (glyph.io?.output ? [glyph.io.output] : []);
+      outputConnectors.forEach((outputConnector, index) => {
+        const outputKey = createOutputKey(glyph.guid, outputConnector.outputIndex ?? index);
+        const outputKind = isOuterDataGlyph
+          ? 'outer-output'
+          : ((outputConnector.outputIndex ?? index) === 1 ? 'secondary-output' : 'output');
         drawIoCircle(
-          glyph.io.output.x,
-          glyph.io.output.y,
+          outputConnector.x,
+          outputConnector.y,
           true,
-          isOuterDataGlyph ? 'outer-output' : 'output',
-          !nodeLineToolActive && isConnectedOutput,
+          outputKind,
+          !nodeLineToolActive && Boolean(outputTargetBySource.get(outputKey)),
           !nodeLineToolActive ? 0.7 : 1,
         );
-        outputPoints.set(glyph.guid, glyph.io.output);
-      }
+
+        outputPoints.set(outputKey, outputConnector);
+      });
 
       if (glyph.io?.param) {
         drawIoCircle(
@@ -1183,7 +1470,7 @@ function drawNodeConnections(node, nodeLineToolActive) {
   if (nodeLineToolActive) {
     node.__lineToolCache = {
       execGlyphGuids: execGlyphs.map((glyph) => glyph.guid),
-      outputSourceGuids: ringGlyphs.filter((glyph) => glyph.io?.output).map((glyph) => glyph.guid),
+      outputSourceGuids: ringGlyphs.flatMap((glyph) => getGlyphOutputPoints(node, glyph, { circleOffset }).map((outputPoint) => createOutputKey(glyph.guid, outputPoint.outputIndex ?? 0))),
       outputPoints,
       inputPoints,
       paramInputPoints,
@@ -1201,6 +1488,8 @@ function drawNodeProgram(node, nodeLineToolActive) {
     return;
   }
 
+  const layoutGlyphs = getLayoutGlyphs(node);
+
   if (!nodeLineToolActive) {
     node.__lineToolCache = null;
   }
@@ -1210,8 +1499,8 @@ function drawNodeProgram(node, nodeLineToolActive) {
   node.glyphs.forEach((glyph) => drawGlyph(glyph, nodeLineToolActive));
   node.outerGlyphs.forEach((glyph) => drawGlyph(glyph, nodeLineToolActive));
   drawArrowMarker(node.startGlyph, node, false);
-  if (node.glyphs.length > 0) {
-    drawArrowMarker(node.glyphs[node.glyphs.length - 1], node, true);
+  if (layoutGlyphs.length > 0) {
+    drawArrowMarker(layoutGlyphs[layoutGlyphs.length - 1], node, true);
   }
 }
 
@@ -1252,6 +1541,12 @@ function drawGhostGlyph() {
         break;
       case 'output':
         drawOutputGlyph(ghostGlyph);
+        break;
+      case 'boolean':
+        drawBooleanGlyph(ghostGlyph);
+        break;
+      case 'ifelse':
+        drawIfElseGlyph(ghostGlyph);
         break;
       default:
         break;
@@ -1374,7 +1669,15 @@ function removeGlyphFromNode(node, glyphGuid) {
   const innerIndex = node.glyphs.findIndex((glyph) => glyph.guid === glyphGuid);
   debugSpellcircle('removeGlyphFromNode', { nodeGuid: node.guid, glyphGuid, innerIndex });
   if (innerIndex !== -1) {
-    return node.glyphs.splice(innerIndex, 1)[0];
+    const removedGlyph = node.glyphs.splice(innerIndex, 1)[0];
+    if (removedGlyph?.type === 'ifelse') {
+      node.glyphs.forEach((glyph) => {
+        if (glyph.type === 'boolean' && glyph.ownerIfGlyphGuid === removedGlyph.guid) {
+          glyph.ownerIfGlyphGuid = null;
+        }
+      });
+    }
+    return removedGlyph;
   }
 
   const outerIndex = node.outerGlyphs.findIndex((glyph) => glyph.guid === glyphGuid);
@@ -1455,6 +1758,9 @@ function finishGlyphDrag(worldX, worldY) {
 
   const parentNode = sourceNode.parentNodeGuid ? findNodeByGuid(sourceNode.parentNodeGuid) : null;
   const childNodeTarget = findDirectChildNodeHit(sourceNode, worldX, worldY, glyph.guid);
+  const ifElseTarget = glyph.type === 'boolean'
+    ? sourceNode.glyphs.find((candidate) => candidate.type === 'ifelse' && isPointInsideGlyph(candidate, worldX, worldY)) || null
+    : null;
 
   if (isPointInsideConnector(sourceNode, worldX, worldY)) {
     deleteDraggedGlyph(glyph, sourceNode);
@@ -1462,31 +1768,41 @@ function finishGlyphDrag(worldX, worldY) {
   }
 
   removeGlyphFromNode(sourceNode, glyph.guid);
+  if (glyph.type === 'boolean') {
+    glyph.ownerIfGlyphGuid = null;
+  }
+
+  if (ifElseTarget && getOwnedBooleans(ifElseTarget, sourceNode).length < 3) {
+    glyph.ownerIfGlyphGuid = ifElseTarget.guid;
+    appendGlyphIntoNode(sourceNode, glyph, 'inner');
+    layoutAllNodes();
+    drawScene();
+    return;
+  }
 
   if (childNodeTarget) {
-    appendGlyphIntoNode(childNodeTarget, glyph, glyph.type === 'value' ? 'outer' : 'inner');
+    appendGlyphIntoNode(childNodeTarget, glyph, isOuterParamGlyphType(glyph.type) ? 'outer' : 'inner');
   } else {
     const ringZone = getRingDropZone(sourceNode, worldX, worldY);
 
     if (ringZone) {
-      const wantsOuter = ringZone === 'outer'
-        && (glyph.type === 'variable' || glyph.type === 'reference' || glyph.type === 'value');
+      const wantsOuter = ringZone === 'outer' && isOuterParamGlyphType(glyph.type);
       const forcedOuter = glyph.type === 'value';
       const layer = forcedOuter ? 'outer' : wantsOuter ? 'outer' : 'inner';
-      const count = layer === 'outer' ? sourceNode.outerGlyphs.length : sourceNode.glyphs.length;
+      const count = layer === 'outer' ? sourceNode.outerGlyphs.length : getLayoutGlyphs(sourceNode).length;
       const insertionIndex = getInsertionIndexForRing(sourceNode.x, sourceNode.y, count, worldX, worldY, layer === 'inner');
       insertGlyphIntoNode(sourceNode, glyph, insertionIndex, layer);
     } else if (Math.hypot(worldX - sourceNode.x, worldY - sourceNode.y) > sourceNode.radius) {
     if (parentNode) {
-      appendGlyphIntoNode(parentNode, glyph, glyph.type === 'value' ? 'outer' : 'inner');
+      appendGlyphIntoNode(parentNode, glyph, isOuterParamGlyphType(glyph.type) ? 'outer' : 'inner');
     } else {
-      appendGlyphIntoNode(sourceNode, glyph, glyph.type === 'value' ? 'outer' : 'inner');
+      appendGlyphIntoNode(sourceNode, glyph, isOuterParamGlyphType(glyph.type) ? 'outer' : 'inner');
     }
     } else {
       if (glyph.type === 'value') {
         appendGlyphIntoNode(sourceNode, glyph, 'outer');
       } else {
-        const insertionIndex = getInsertionIndexForRing(sourceNode.x, sourceNode.y, sourceNode.glyphs.length, worldX, worldY, true);
+        const insertionIndex = getInsertionIndexForRing(sourceNode.x, sourceNode.y, getLayoutGlyphs(sourceNode).length, worldX, worldY, true);
         insertGlyphIntoNode(sourceNode, glyph, insertionIndex, 'inner');
       }
     }
@@ -1553,6 +1869,14 @@ function isPointInsideGlyph(glyph, worldX, worldY) {
     return Math.hypot(worldX - glyph.x, worldY - glyph.y) <= glyph.radius;
   }
 
+  if (glyph.type === 'ifelse') {
+    return isPointInsideTriangleGlyph(glyph, worldX, worldY);
+  }
+
+  if (isOwnedBooleanGlyph(glyph) && !isOwnedBooleanVisible(glyph)) {
+    return false;
+  }
+
   if (glyph.type === 'variable' || glyph.type === 'value' || glyph.type === 'reference') {
     return Math.hypot(worldX - glyph.x, worldY - glyph.y) <= glyph.radius;
   }
@@ -1569,6 +1893,10 @@ function findGlyphHit(node, worldX, worldY, predicate = () => true) {
 
   for (let index = combinedGlyphs.length - 1; index >= 0; index -= 1) {
     const glyph = combinedGlyphs[index];
+
+    if (isOwnedBooleanGlyph(glyph) && !isOwnedBooleanVisible(glyph)) {
+      continue;
+    }
 
     if (isNode(glyph)) {
       const nested = findGlyphHit(glyph, worldX, worldY, predicate);
@@ -1606,10 +1934,16 @@ function getGlyphTooltip(glyph) {
       return { title: 'Subtract', description: `Operand: ${glyph.operand}` };
     case 'reference': {
       const target = getReferenceTarget(glyph);
-      return { title: 'Reference', description: target ? `Variable: ${target.name}` : 'Variable: none' };
+      return { title: 'Reference', description: target ? `Target: ${getReferenceableGlyphLabel(target)}` : 'Target: none' };
     }
     case 'output':
       return { title: 'Output', description: 'Logs the current value to the console.' };
+    case 'boolean':
+      return glyph.ring === 'outer'
+        ? { title: 'Boolean', description: `Literal: ${glyph.checked ? 'true' : 'false'}` }
+        : { title: 'Boolean', description: `Operator: ${getBooleanOperatorLabel(glyph.operation)}` };
+    case 'ifelse':
+      return { title: 'If / Else', description: `Mode: ${getIfElseModeLabel(glyph.mode)}. First output is pass, second output is fail.` };
     case 'value':
       return { title: glyph.name, description: '' };
     default:
@@ -1626,6 +1960,8 @@ function focusNode(node) {
 }
 
 function updateCanvasHover(clientX, clientY) {
+  const previousHoverIfElseGlyphGuid = hoverIfElseGlyphGuid;
+
   if (
     panState.active
     || dragState.active
@@ -1633,6 +1969,8 @@ function updateCanvasHover(clientX, clientY) {
     || activeValueDropdown
     || variableModalBackdrop.classList.contains('is-visible')
     || referenceModalBackdrop.classList.contains('is-visible')
+    || booleanModalBackdrop.classList.contains('is-visible')
+    || ifElseModalBackdrop.classList.contains('is-visible')
     || deleteModalBackdrop.classList.contains('is-visible')
   ) {
     canvas.classList.remove('is-connector-hover');
@@ -1652,20 +1990,30 @@ function updateCanvasHover(clientX, clientY) {
 
   canvas.classList.toggle('is-connector-hover', Boolean(connectorTarget));
 
-  const hoverGlyph = findCanvasGlyph(
-    worldPoint.x,
-    worldPoint.y,
-    (glyph) => glyph.type === 'variable' || glyph.type === 'reference' || glyph.type === 'value',
-  );
+  const hoverGlyph = findCanvasGlyph(worldPoint.x, worldPoint.y, (glyph) => glyph.type !== 'start');
   if (hoverGlyph) {
     hoverCanvasGlyphGuid = hoverGlyph.guid;
+    hoverIfElseGlyphGuid = hoverGlyph.type === 'ifelse'
+      ? hoverGlyph.guid
+      : (isOwnedBooleanGlyph(hoverGlyph) ? hoverGlyph.ownerIfGlyphGuid : null);
+    if (previousHoverIfElseGlyphGuid !== hoverIfElseGlyphGuid) {
+      drawScene();
+    }
     const tooltip = getGlyphTooltip(hoverGlyph);
-    showTooltip(tooltip.title, tooltip.description, clientX, clientY);
-    return;
+    if (tooltip) {
+      showTooltip(tooltip.title, tooltip.description, clientX, clientY);
+      return;
+    }
   }
 
   if (hoverCanvasGlyphGuid) {
     hideTooltip();
+  }
+
+  hoverCanvasGlyphGuid = null;
+  hoverIfElseGlyphGuid = null;
+  if (previousHoverIfElseGlyphGuid !== hoverIfElseGlyphGuid) {
+    drawScene();
   }
 }
 
@@ -1693,36 +2041,44 @@ function findLineToolStartTargetInNode(node, worldX, worldY) {
 
   for (const [fromGuid, squarePoint] of cache.endSquares.entries()) {
     if (Math.abs(worldX - squarePoint.x) <= squareSize / 2 && Math.abs(worldY - squarePoint.y) <= squareSize / 2) {
-      const fromGlyph = getOutputSourceGlyphByGuid(node, fromGuid);
+      const { guid: outputGuid, outputIndex } = parseOutputKey(fromGuid);
+      const fromGlyph = getOutputSourceGlyphByGuid(node, outputGuid);
       if (fromGlyph) {
         return {
           node,
-          fromGuid,
+          fromGuid: outputGuid,
+          fromOutputIndex: outputIndex,
           fromGlyph,
           fromPoint: cache.outputPoints.get(fromGuid)
             || fromGlyph.io?.output
-            || getGlyphDefaultOutputPoint(node, fromGlyph, cache.circleOffset),
+            || getGlyphDefaultOutputPoint(node, fromGlyph, cache.circleOffset, outputIndex),
         };
       }
     }
   }
 
   for (const fromGuid of cache.outputSourceGuids) {
-    const fromGlyph = getOutputSourceGlyphByGuid(node, fromGuid);
+    const { guid: outputGuid, outputIndex } = parseOutputKey(fromGuid);
+    const fromGlyph = getOutputSourceGlyphByGuid(node, outputGuid);
     if (!fromGlyph) {
       continue;
     }
 
-    const outputPoint = cache.outputPoints.get(fromGuid)
-      || fromGlyph.io?.output
-      || getGlyphDefaultOutputPoint(node, fromGlyph, cache.circleOffset);
-    if (Math.hypot(worldX - outputPoint.x, worldY - outputPoint.y) <= cache.circleRadius * 1.25) {
-      return {
-        node,
-        fromGuid,
-        fromGlyph,
-        fromPoint: outputPoint,
-      };
+    const outputPoints = getGlyphOutputPoints(node, fromGlyph, cache);
+    for (const outputPoint of outputPoints) {
+      if ((outputPoint.outputIndex ?? 0) !== outputIndex) {
+        continue;
+      }
+
+      if (Math.hypot(worldX - outputPoint.x, worldY - outputPoint.y) <= cache.circleRadius * 1.25) {
+        return {
+          node,
+          fromGuid: outputGuid,
+          fromOutputIndex: outputIndex,
+          fromGlyph,
+          fromPoint: outputPoint,
+        };
+      }
     }
   }
 
@@ -1756,12 +2112,33 @@ function getOutputSourceGlyphByGuid(node, guid) {
   return getExecGlyphByGuid(node, guid) || node.outerGlyphs.find((glyph) => glyph.guid === guid) || null;
 }
 
-function getGlyphDefaultOutputPoint(node, glyph, circleOffset) {
-  const outwardEdge = getGlyphOuterRadius(glyph, 0, 1);
+function getGlyphDefaultOutputPoint(node, glyph, circleOffset, outputIndex = 0) {
+  const angle = glyph.type === 'ifelse' && outputIndex === 1 ? (Math.PI / 2) + 0.48 : Math.PI / 2;
+  const outwardEdge = getGlyphOuterRadius(glyph, Math.cos(angle), Math.sin(angle));
   return {
-    x: glyph.x,
-    y: glyph.y + (outwardEdge + circleOffset),
+    x: glyph.x + Math.cos(angle) * (outwardEdge + circleOffset),
+    y: glyph.y + Math.sin(angle) * (outwardEdge + circleOffset),
+    kind: 'output',
+    ownerGuid: glyph.guid,
+    outputIndex,
   };
+}
+
+function getGlyphOutputPoints(node, glyph, cache) {
+  if (isOwnedBooleanGlyph(glyph)) {
+    return [];
+  }
+
+  if (glyph.io?.outputs?.length) {
+    return glyph.io.outputs;
+  }
+
+  if (glyph.io?.output) {
+    return [glyph.io.output];
+  }
+
+  const outputCount = glyph.type === 'ifelse' ? 2 : 1;
+  return Array.from({ length: outputCount }, (_, outputIndex) => getGlyphDefaultOutputPoint(node, glyph, cache.circleOffset, outputIndex));
 }
 
 function getGlyphDefaultInputPoint(node, glyph, circleOffset) {
@@ -1772,21 +2149,32 @@ function getGlyphDefaultInputPoint(node, glyph, circleOffset) {
   };
 }
 
-function disconnectOutgoing(fromGlyph) {
+function disconnectOutgoing(fromGlyph, outputIndex = 0) {
+  if (fromGlyph.type === 'ifelse' && outputIndex === 1) {
+    fromGlyph.nextGlyphGuidFalse = null;
+    return;
+  }
+
   fromGlyph.nextGlyphGuid = null;
   fromGlyph.nextGlyphGuidIsAuto = false;
 }
 
-function connectOutgoing(fromGlyph, toGuid) {
+function connectOutgoing(fromGlyph, toGuid, outputIndex = 0) {
+  if (fromGlyph.type === 'ifelse' && outputIndex === 1) {
+    fromGlyph.nextGlyphGuidFalse = toGuid;
+    return;
+  }
+
   fromGlyph.nextGlyphGuid = toGuid;
   fromGlyph.nextGlyphGuidIsAuto = false;
 }
 
-function startWireDrag(node, fromGuid, fromPoint, pointerId, worldX, worldY) {
+function startWireDrag(node, fromGuid, fromOutputIndex, fromPoint, pointerId, worldX, worldY) {
   wireDragState.active = true;
   wireDragState.pointerId = pointerId;
   wireDragState.node = node;
   wireDragState.fromGuid = fromGuid;
+  wireDragState.fromOutputIndex = fromOutputIndex;
   wireDragState.fromPoint = fromPoint;
   wireDragState.toWorld = { x: worldX, y: worldY };
 }
@@ -1800,6 +2188,7 @@ function clearWireDrag() {
   wireDragState.pointerId = null;
   wireDragState.node = null;
   wireDragState.fromGuid = null;
+  wireDragState.fromOutputIndex = 0;
   wireDragState.fromPoint = null;
   wireDragState.toWorld = null;
 }
@@ -1823,8 +2212,7 @@ function finishWireDrag(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
   const dropPoint = screenToWorld(clientX - rect.left, clientY - rect.top);
   wireDragState.toWorld = { x: dropPoint.x, y: dropPoint.y };
-  const isOuterDataSource = fromGlyph.ring === 'outer'
-    && (fromGlyph.type === 'variable' || fromGlyph.type === 'reference' || fromGlyph.type === 'value');
+  const isOuterDataSource = fromGlyph.ring === 'outer' && isOuterParamGlyphType(fromGlyph.type);
 
   let targetGuid = null;
   if (isOuterDataSource) {
@@ -1848,7 +2236,7 @@ function finishWireDrag(clientX, clientY) {
   }
 
   if (targetGuid) {
-    connectOutgoing(fromGlyph, targetGuid);
+    connectOutgoing(fromGlyph, targetGuid, wireDragState.fromOutputIndex);
   }
 
   layoutAllNodes();
@@ -1867,6 +2255,61 @@ function closeValueDropdown() {
   activeValueDropdown.wrapper.remove();
   activeValueDropdown = null;
   activeValueGlyph = null;
+}
+
+function openBooleanModal(glyph) {
+  activeBooleanGlyph = glyph;
+  glyph.operation = normalizeBooleanOperation(glyph.operation);
+  booleanModalOperatorSelect.value = glyph.operation;
+  booleanModalCheckbox.checked = Boolean(glyph.checked);
+  const isOuterGlyph = glyph.ring === 'outer';
+  booleanModalOperatorField.hidden = isOuterGlyph;
+  booleanModalCheckboxField.hidden = !isOuterGlyph;
+  booleanModalBackdrop.classList.add('is-visible');
+  booleanModalBackdrop.setAttribute('aria-hidden', 'false');
+  window.setTimeout(() => {
+    if (isOuterGlyph) {
+      booleanModalCheckbox.focus();
+    } else {
+      booleanModalOperatorSelect.focus();
+    }
+  }, 0);
+}
+
+function closeBooleanModal(commit) {
+  if (commit && activeBooleanGlyph) {
+    if (activeBooleanGlyph.ring === 'outer') {
+      activeBooleanGlyph.checked = Boolean(booleanModalCheckbox.checked);
+    } else {
+      activeBooleanGlyph.operation = normalizeBooleanOperation(booleanModalOperatorSelect.value);
+    }
+  }
+
+  activeBooleanGlyph = null;
+  booleanModalBackdrop.classList.remove('is-visible');
+  booleanModalBackdrop.setAttribute('aria-hidden', 'true');
+  drawScene();
+}
+
+function openIfElseModal(glyph) {
+  activeIfElseGlyph = glyph;
+  ifElseModalModeSelect.value = glyph.mode === 'or' ? 'or' : 'and';
+  ifElseModalBackdrop.classList.add('is-visible');
+  ifElseModalBackdrop.setAttribute('aria-hidden', 'false');
+  window.setTimeout(() => {
+    ifElseModalModeSelect.focus();
+  }, 0);
+}
+
+function closeIfElseModal(commit) {
+  if (commit && activeIfElseGlyph) {
+    activeIfElseGlyph.mode = ifElseModalModeSelect.value === 'or' ? 'or' : 'and';
+  }
+
+  activeIfElseGlyph = null;
+  ifElseModalBackdrop.classList.remove('is-visible');
+  ifElseModalBackdrop.setAttribute('aria-hidden', 'true');
+  drawScene();
 }
 
 function openValueDropdown(valueGlyph, clientX, clientY) {
@@ -1981,15 +2424,37 @@ function getAllVariableGlyphs(nodes = topLevelNodes, results = []) {
   return results;
 }
 
+function getAllReferenceableGlyphs(nodes = topLevelNodes, results = []) {
+  nodes.forEach((node) => {
+    node.outerGlyphs.forEach((glyph) => {
+      if (glyph.type === 'variable' || glyph.type === 'boolean') {
+        results.push(glyph);
+      }
+    });
+
+    node.glyphs.forEach((glyph) => {
+      if (glyph.type === 'variable' || (glyph.type === 'boolean' && !isOwnedBooleanGlyph(glyph))) {
+        results.push(glyph);
+      }
+
+      if (isNode(glyph)) {
+        getAllReferenceableGlyphs([glyph], results);
+      }
+    });
+  });
+
+  return results;
+}
+
 function openReferenceModal(glyph) {
   activeReferenceGlyph = glyph;
-  const variables = getAllVariableGlyphs().filter((variableGlyph) => variableGlyph.guid !== glyph.guid);
+  const variables = getAllReferenceableGlyphs().filter((variableGlyph) => variableGlyph.guid !== glyph.guid);
   referenceModalSelect.innerHTML = '<option value="">None</option>';
 
   variables.forEach((variableGlyph) => {
     const option = document.createElement('option');
     option.value = variableGlyph.guid;
-    option.textContent = variableGlyph.name;
+    option.textContent = getReferenceableGlyphLabel(variableGlyph);
     referenceModalSelect.append(option);
   });
 
@@ -2030,6 +2495,42 @@ function closeDeleteModal(commit) {
 function coerceNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function evaluateBooleanOperation(operation, inputValue, paramValue) {
+  const leftValue = coerceNumber(inputValue);
+  const rightValue = coerceNumber(paramValue);
+
+  switch (normalizeBooleanOperation(operation)) {
+    case 'less':
+      return leftValue < rightValue;
+    case 'greater':
+      return leftValue > rightValue;
+    case 'equal':
+      return leftValue === rightValue;
+    case 'not-equal':
+      return leftValue !== rightValue;
+    default:
+      return leftValue === rightValue;
+  }
+}
+
+function evaluateOwnedBooleanGlyph(node, glyph, currentValue, directInput, paramInput, ownerGlyph = null) {
+  const paramOwnerGuid = ownerGlyph?.guid ?? glyph.guid;
+  const paramSource = findIncomingOuterConnection(node, paramOwnerGuid);
+  const comparisonValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput) : 0;
+  glyph.lastResult = evaluateBooleanOperation(glyph.operation, currentValue, comparisonValue) ? 1 : 0;
+  return glyph.lastResult;
+}
+
+function evaluateIfElseCondition(node, glyph, currentValue, directInput, paramInput) {
+  const ownedBooleans = getOwnedBooleans(glyph, node);
+  if (ownedBooleans.length === 0) {
+    return true;
+  }
+
+  const results = ownedBooleans.map((ownedBoolean) => evaluateOwnedBooleanGlyph(node, ownedBoolean, currentValue, directInput, paramInput, glyph) === 1);
+  return glyph.mode === 'or' ? results.some(Boolean) : results.every(Boolean);
 }
 
 function findNodeByGuid(targetGuid, nodes = topLevelNodes) {
@@ -2123,7 +2624,17 @@ function executeGlyph(node, glyph, currentValue, directInput, paramInput) {
     case 'reference': {
       const target = getReferenceTarget(glyph);
       if (glyph.ring === 'outer') {
+        if (target?.type === 'boolean') {
+          return target.ring === 'outer'
+            ? (target.checked ? 1 : target.lastResult ?? 0)
+            : (target.lastResult ?? 0);
+        }
+
         return target?.value ?? currentValue;
+      }
+
+      if (target?.type === 'boolean') {
+        return currentValue;
       }
 
       if (target) {
@@ -2142,9 +2653,15 @@ function executeGlyph(node, glyph, currentValue, directInput, paramInput) {
       const operandValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput) : 1;
       return coerceNumber(currentValue) - coerceNumber(operandValue);
     }
+    case 'boolean': {
+      return evaluateOwnedBooleanGlyph(node, glyph, currentValue, directInput, paramInput);
+    }
     case 'output':
       console.log(currentValue);
       appendMessageLog(currentValue);
+      return currentValue;
+    case 'ifelse':
+      glyph.lastResult = evaluateIfElseCondition(node, glyph, currentValue, directInput, paramInput) ? 1 : 0;
       return currentValue;
     default:
       return currentValue;
@@ -2171,7 +2688,17 @@ function evaluateOuterGlyphValue(glyph, directInput, paramInput) {
 
   if (glyph.type === 'reference') {
     const target = getReferenceTarget(glyph);
+    if (target?.type === 'boolean') {
+      return target.ring === 'outer'
+        ? (target.checked ? 1 : 0)
+        : (target.lastResult ?? 0);
+    }
+
     return target?.value ?? directInput;
+  }
+
+  if (glyph.type === 'boolean') {
+    return glyph.checked ? 1 : 0;
   }
 
   return directInput;
@@ -2209,7 +2736,13 @@ function executeNode(node, incomingValue, paramValue = null) {
       currentValue = executeGlyph(node, glyph, currentValue, directInput, paramInput);
     }
 
-    currentGuid = glyph.nextGlyphGuid;
+    if (glyph.type === 'ifelse') {
+      currentGuid = glyph.lastResult === 1
+        ? glyph.nextGlyphGuid
+        : glyph.nextGlyphGuidFalse;
+    } else {
+      currentGuid = glyph.nextGlyphGuid;
+    }
   }
 
   return currentValue;
@@ -2264,12 +2797,17 @@ function serializeNode(node, nodes, glyphs) {
       type: glyph.type,
       parentNodeGuid: glyph.parentNodeGuid,
       nextGlyphGuid: glyph.nextGlyphGuid,
+      ...(glyph.nextGlyphGuidFalse !== undefined ? { nextGlyphGuidFalse: glyph.nextGlyphGuidFalse } : {}),
       ...(glyph.ring ? { ring: glyph.ring } : {}),
       ...(glyph.name !== undefined ? { name: glyph.name } : {}),
       ...(glyph.value !== undefined ? { value: glyph.value } : {}),
       ...(glyph.inputIndex !== undefined ? { inputIndex: glyph.inputIndex } : {}),
       ...(glyph.operand !== undefined ? { operand: glyph.operand } : {}),
       ...(glyph.referenceGlyphGuid !== undefined ? { referenceGlyphGuid: glyph.referenceGlyphGuid } : {}),
+      ...(glyph.ownerIfGlyphGuid !== undefined ? { ownerIfGlyphGuid: glyph.ownerIfGlyphGuid } : {}),
+      ...(glyph.operation !== undefined ? { operation: glyph.operation } : {}),
+      ...(glyph.checked !== undefined ? { checked: glyph.checked } : {}),
+      ...(glyph.mode !== undefined ? { mode: glyph.mode } : {}),
     };
   });
 
@@ -2279,11 +2817,16 @@ function serializeNode(node, nodes, glyphs) {
       type: glyph.type,
       parentNodeGuid: glyph.parentNodeGuid,
       nextGlyphGuid: glyph.nextGlyphGuid,
+      ...(glyph.nextGlyphGuidFalse !== undefined ? { nextGlyphGuidFalse: glyph.nextGlyphGuidFalse } : {}),
       ...(glyph.ring ? { ring: glyph.ring } : {}),
       ...(glyph.name !== undefined ? { name: glyph.name } : {}),
       ...(glyph.value !== undefined ? { value: glyph.value } : {}),
       ...(glyph.inputIndex !== undefined ? { inputIndex: glyph.inputIndex } : {}),
       ...(glyph.referenceGlyphGuid !== undefined ? { referenceGlyphGuid: glyph.referenceGlyphGuid } : {}),
+      ...(glyph.ownerIfGlyphGuid !== undefined ? { ownerIfGlyphGuid: glyph.ownerIfGlyphGuid } : {}),
+      ...(glyph.operation !== undefined ? { operation: glyph.operation } : {}),
+      ...(glyph.checked !== undefined ? { checked: glyph.checked } : {}),
+      ...(glyph.mode !== undefined ? { mode: glyph.mode } : {}),
     };
   });
 }
@@ -2368,12 +2911,30 @@ function hydrateGlyphFromSerialized(serialized) {
     case 'output':
       glyph = new OutputGlyph(base);
       break;
+    case 'boolean':
+      glyph = new BooleanGlyph({
+        ...base,
+        operation: serialized.operation ?? 'equal',
+        checked: serialized.checked ?? false,
+        ownerIfGlyphGuid: serialized.ownerIfGlyphGuid ?? null,
+      });
+      break;
+    case 'ifelse':
+      glyph = new IfElseGlyph({
+        ...base,
+        mode: serialized.mode ?? 'and',
+        nextGlyphGuidFalse: serialized.nextGlyphGuidFalse ?? null,
+      });
+      break;
     default:
       glyph = new Glyph({ guid: serialized.guid, type: serialized.type, parentNodeGuid: serialized.parentNodeGuid });
       break;
   }
 
   glyph.nextGlyphGuid = serialized.nextGlyphGuid ?? null;
+  if (glyph.type === 'ifelse') {
+    glyph.nextGlyphGuidFalse = serialized.nextGlyphGuidFalse ?? null;
+  }
   glyph.nextGlyphGuidIsAuto = false;
   glyph.x = 0;
   glyph.y = 0;
@@ -2795,6 +3356,34 @@ referenceModalBackdrop.addEventListener('click', (event) => {
   }
 });
 
+booleanModalAccept.addEventListener('click', () => {
+  closeBooleanModal(true);
+});
+
+booleanModalCancel.addEventListener('click', () => {
+  closeBooleanModal(false);
+});
+
+booleanModalBackdrop.addEventListener('click', (event) => {
+  if (event.target === booleanModalBackdrop) {
+    closeBooleanModal(false);
+  }
+});
+
+ifElseModalAccept.addEventListener('click', () => {
+  closeIfElseModal(true);
+});
+
+ifElseModalCancel.addEventListener('click', () => {
+  closeIfElseModal(false);
+});
+
+ifElseModalBackdrop.addEventListener('click', (event) => {
+  if (event.target === ifElseModalBackdrop) {
+    closeIfElseModal(false);
+  }
+});
+
 deleteModalConfirm.addEventListener('click', () => {
   closeDeleteModal(true);
 });
@@ -2819,11 +3408,43 @@ variableModalInput.addEventListener('keydown', (event) => {
   }
 });
 
+booleanModalOperatorSelect.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    closeBooleanModal(true);
+  }
+
+  if (event.key === 'Escape') {
+    closeBooleanModal(false);
+  }
+});
+
+booleanModalCheckbox.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    closeBooleanModal(true);
+  }
+
+  if (event.key === 'Escape') {
+    closeBooleanModal(false);
+  }
+});
+
+ifElseModalModeSelect.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    closeIfElseModal(true);
+  }
+
+  if (event.key === 'Escape') {
+    closeIfElseModal(false);
+  }
+});
+
 canvas.addEventListener('pointerdown', (event) => {
   if (
     event.button !== 0
     || variableModalBackdrop.classList.contains('is-visible')
     || referenceModalBackdrop.classList.contains('is-visible')
+    || booleanModalBackdrop.classList.contains('is-visible')
+    || ifElseModalBackdrop.classList.contains('is-visible')
     || deleteModalBackdrop.classList.contains('is-visible')
   ) {
     return;
@@ -2835,10 +3456,11 @@ canvas.addEventListener('pointerdown', (event) => {
   if (lineToolEnabled) {
     const wireStartTarget = findLineToolStartTarget(worldPoint.x, worldPoint.y);
     if (wireStartTarget) {
-      disconnectOutgoing(wireStartTarget.fromGlyph);
+      disconnectOutgoing(wireStartTarget.fromGlyph, wireStartTarget.fromOutputIndex ?? 0);
       startWireDrag(
         wireStartTarget.node,
         wireStartTarget.fromGuid,
+        wireStartTarget.fromOutputIndex ?? 0,
         wireStartTarget.fromPoint,
         event.pointerId,
         worldPoint.x,
@@ -2958,6 +3580,10 @@ canvas.addEventListener('pointerup', (event) => {
       openReferenceModal(dragState.glyph);
     } else if (dragState.glyph?.type === 'value') {
       openValueDropdown(dragState.glyph, event.clientX, event.clientY);
+    } else if (dragState.glyph?.type === 'boolean') {
+      openBooleanModal(dragState.glyph);
+    } else if (dragState.glyph?.type === 'ifelse') {
+      openIfElseModal(dragState.glyph);
     }
 
     clearGlyphDrag();
@@ -2983,13 +3609,17 @@ canvas.addEventListener('pointerup', (event) => {
     const editableGlyph = findCanvasGlyph(
       worldPoint.x,
       worldPoint.y,
-      (glyph) => glyph.type === 'variable' || glyph.type === 'reference',
+      (glyph) => glyph.type === 'variable' || glyph.type === 'reference' || glyph.type === 'boolean' || glyph.type === 'ifelse',
     );
 
     if (editableGlyph?.type === 'variable') {
       openVariableModal(editableGlyph);
     } else if (editableGlyph?.type === 'reference') {
       openReferenceModal(editableGlyph);
+    } else if (editableGlyph?.type === 'boolean') {
+      openBooleanModal(editableGlyph);
+    } else if (editableGlyph?.type === 'ifelse') {
+      openIfElseModal(editableGlyph);
     }
   }
 

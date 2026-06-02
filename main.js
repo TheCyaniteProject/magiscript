@@ -20,19 +20,20 @@ function emitSpellcircleDebug(win, step, details = {}) {
   win?.webContents?.send?.('spellcircle:debug', payload);
 }
 
-ipcMain.handle('spellcircle:save', async (_event, program) => {
+ipcMain.handle('spellcircle:save', async (event, program) => {
   try {
-    const win = BrowserWindow.getFocusedWindow();
+    const win = BrowserWindow.fromWebContents(event.sender) || BrowserWindow.getFocusedWindow();
     emitSpellcircleDebug(win, 'save:invoke', {
       hasProgram: Boolean(program),
       rootCount: Array.isArray(program?.rootNodeGuids) ? program.rootNodeGuids.length : null,
     });
 
-    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    const filePath = dialog.showSaveDialogSync(win, {
       title: 'Save Spellcircle',
-      defaultPath: 'script.spellcircle',
+      defaultPath: path.join(app.getPath('documents'), 'script.spellcircle'),
       filters: [{ name: 'Spellcircle', extensions: ['spellcircle'] }],
     });
+    const canceled = !filePath;
 
     emitSpellcircleDebug(win, 'save:dialog-result', {
       canceled,
@@ -55,7 +56,7 @@ ipcMain.handle('spellcircle:save', async (_event, program) => {
 
     return { canceled: false, filePath };
   } catch (error) {
-    const win = BrowserWindow.getFocusedWindow();
+    const win = BrowserWindow.fromWebContents(event.sender) || BrowserWindow.getFocusedWindow();
     emitSpellcircleDebug(win, 'save:error', {
       message: error instanceof Error ? error.message : String(error),
     });
@@ -67,16 +68,17 @@ ipcMain.handle('spellcircle:save', async (_event, program) => {
   }
 });
 
-ipcMain.handle('spellcircle:load', async () => {
+ipcMain.handle('spellcircle:load', async (event) => {
   try {
-    const win = BrowserWindow.getFocusedWindow();
+    const win = BrowserWindow.fromWebContents(event.sender) || BrowserWindow.getFocusedWindow();
     emitSpellcircleDebug(win, 'load:invoke');
 
-    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    const filePaths = dialog.showOpenDialogSync(win, {
       title: 'Load Spellcircle',
       properties: ['openFile'],
       filters: [{ name: 'Spellcircle', extensions: ['spellcircle'] }],
     });
+    const canceled = !filePaths || filePaths.length === 0;
 
     emitSpellcircleDebug(win, 'load:dialog-result', {
       canceled,
@@ -105,7 +107,7 @@ ipcMain.handle('spellcircle:load', async () => {
 
     return { canceled: false, filePath, program };
   } catch (error) {
-    const win = BrowserWindow.getFocusedWindow();
+    const win = BrowserWindow.fromWebContents(event.sender) || BrowserWindow.getFocusedWindow();
     emitSpellcircleDebug(win, 'load:error', {
       message: error instanceof Error ? error.message : String(error),
     });

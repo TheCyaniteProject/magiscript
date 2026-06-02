@@ -13,6 +13,7 @@ class Glyph {
     this.io = {
       input: null,
       output: null,
+      outputs: [],
       param: null,
     };
   }
@@ -52,6 +53,7 @@ class Glyph {
     allowInput = true,
     allowOutput = true,
     allowParam = false,
+    outputAngles = null,
   }) {
     const defaultInputAngle = -Math.PI / 2;
     const defaultOutputAngle = Math.PI / 2;
@@ -79,14 +81,24 @@ class Glyph {
       })
       : null;
 
-    this.io.output = allowOutput && outputAngle !== null
-      ? new IOConnector({
-        x: this.getPointAtAngle(outputAngle, circleOffset).x,
-        y: this.getPointAtAngle(outputAngle, circleOffset).y,
-        kind: 'output',
-        ownerGuid: this.guid,
-      })
-      : null;
+    const resolvedOutputAngles = allowOutput
+      ? (Array.isArray(outputAngles) && outputAngles.length > 0 ? outputAngles : [outputAngle])
+      : [];
+
+    this.io.outputs = resolvedOutputAngles
+      .filter((angle) => angle !== null)
+      .map((angle, outputIndex) => {
+        const point = this.getPointAtAngle(angle, circleOffset);
+        return new IOConnector({
+          x: point.x,
+          y: point.y,
+          kind: 'output',
+          ownerGuid: this.guid,
+          outputIndex,
+        });
+      });
+
+    this.io.output = this.io.outputs[0] ?? null;
 
     this.io.param = allowParam && paramAngle !== null
       ? new IOConnector({

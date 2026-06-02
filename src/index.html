@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;"
-    />
+    <meta charset="UTF-8" /><meta http-equiv="Content-Security-Policy" content="
+  default-src 'self'; 
+  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; 
+  font-src 'self' https://gstatic.com;
+">
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MagiScript</title>
     <link rel="stylesheet" href="./styles.css" />
@@ -129,6 +129,32 @@
               <span class="tray-label">PRINT</span>
             </span>
           </button>
+          <button
+            class="object-card"
+            type="button"
+            draggable="true"
+            data-object-type="ifelse"
+            data-name="If / Else"
+            data-description="Branch glyph placeholder with one input and two outputs. Execution logic not implemented yet."
+            aria-label="If else glyph"
+          >
+            <span class="object-card__preview" aria-hidden="true">
+              <span class="tray-label">IF</span>
+            </span>
+          </button>
+          <button
+            class="object-card"
+            type="button"
+            draggable="true"
+            data-object-type="boolean"
+            data-name="Boolean"
+            data-description="Compares input and param, or acts as a true/false param literal when placed on the outer ring."
+            aria-label="Boolean glyph"
+          >
+            <span class="object-card__preview" aria-hidden="true">
+              <span class="tray-label">EQ</span>
+            </span>
+          </button>
         </div>
       </aside>
 
@@ -179,12 +205,55 @@
       <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="referenceModalTitle">
         <h2 id="referenceModalTitle">Edit Reference</h2>
         <label class="modal-field">
-          <span>Variable</span>
+          <span>Target</span>
           <select id="referenceModalSelect" class="modal-input"></select>
         </label>
         <div class="modal-actions">
           <button id="referenceModalCancel" type="button">Cancel</button>
           <button id="referenceModalAccept" type="button">Accept</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="booleanModalBackdrop" aria-hidden="true">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="booleanModalTitle">
+        <h2 id="booleanModalTitle">Edit Boolean</h2>
+        <label class="modal-field" id="booleanModalOperatorField">
+          <span>Operator</span>
+          <select id="booleanModalOperatorSelect" class="modal-input">
+            <option value="less">LT — Less</option>
+            <option value="greater">GT — Greater</option>
+            <option value="equal">EQ — Equal</option>
+            <option value="not-equal">NE — Not Equal</option>
+          </select>
+        </label>
+        <label class="modal-field modal-field--checkbox" id="booleanModalCheckboxField">
+          <span>Value</span>
+          <label class="modal-checkbox">
+            <input id="booleanModalCheckbox" type="checkbox" />
+            <span>True</span>
+          </label>
+        </label>
+        <div class="modal-actions">
+          <button id="booleanModalCancel" type="button">Cancel</button>
+          <button id="booleanModalAccept" type="button">Accept</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="ifElseModalBackdrop" aria-hidden="true">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="ifElseModalTitle">
+        <h2 id="ifElseModalTitle">Edit If / Else</h2>
+        <label class="modal-field">
+          <span>Boolean mode</span>
+          <select id="ifElseModalModeSelect" class="modal-input">
+            <option value="and">AND</option>
+            <option value="or">OR</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button id="ifElseModalCancel" type="button">Cancel</button>
+          <button id="ifElseModalAccept" type="button">Accept</button>
         </div>
       </div>
     </div>
@@ -210,6 +279,8 @@
     <script src="./glyphs/AddGlyph.js"></script>
     <script src="./glyphs/SubtractGlyph.js"></script>
     <script src="./glyphs/OutputGlyph.js"></script>
+    <script src="./glyphs/IfElseGlyph.js"></script>
+    <script src="./glyphs/BooleanGlyph.js"></script>
     <script src="./renderer.js"></script>
   </body>
 </html>
