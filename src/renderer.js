@@ -1,6 +1,7 @@
 const appShell = document.querySelector('.app-shell');
 const trayToggle = document.getElementById('trayToggle');
 const recenterCanvasButton = document.getElementById('recenterCanvas');
+const focusParentNodeButton = document.getElementById('focusParentNode');
 const playProgramButton = document.getElementById('playProgram');
 const saveProgramButton = document.getElementById('saveProgram');
 const loadProgramButton = document.getElementById('loadProgram');
@@ -63,12 +64,6 @@ const wireDragState = {
   toWorld: null,
 };
 
-const camera = {
-  x: 0,
-  y: 0,
-  zoom: 1,
-};
-
 const panState = {
   active: false,
   moved: false,
@@ -89,7 +84,6 @@ const dragState = {
 
 const GRID_MINOR_STEP = 24;
 const GRID_MAJOR_STEP = 96;
-const MIN_ZOOM = 0.35;
 
 // Glyph font configuration — adjust these to change glyph text appearance.
 // Matches: font-family: "Mr De Haviland", cursive;
@@ -117,6 +111,15 @@ const GROUP_MIN_LINE_LENGTH_RATIO = GROUP_MIN_LINE_LENGTH / ROOT_NODE_RADIUS;
 const GROUP_ARROW_GAP_RATIO = GROUP_ARROW_GAP / ROOT_NODE_RADIUS;
 const CONNECTOR_RADIUS_RATIO = CONNECTOR_BASE_RADIUS / ROOT_NODE_RADIUS;
 const SYSTEM_VALUE_DEFAULT = 'null';
+const RENDER_MODE_FULL = 'full';
+const RENDER_MODE_FOCUS = 'focus';
+const RENDER_MODE_CONTEXT = 'context';
+const RENDER_MODE_CONTEXT_NODE_ONLY = 'context-node-only';
+const RENDER_MODE_CHILD_CONTEXT = 'child-context';
+const RENDER_MODE_CHILD_CONTEXT_NODE_ONLY = 'child-context-node-only';
+
+let hiddenContextNodeGuid = null;
+const PARENT_CONTEXT_LINE_WIDTH_MULTIPLIER = 1.5;
 
 function createGuid() {
   if (globalThis.crypto?.randomUUID) {
@@ -376,36 +379,48 @@ function getViewportSize() {
 function shouldApplyLineToolToNode(node) {
   const { width, height } = getViewportSize();
   const minDimension = Math.max(1, Math.min(width, height));
-  const diameterPixels = node.radius * 2 * camera.zoom;
+  const diameterPixels = node.radius * 2;
   return (diameterPixels / minDimension) >= NODE_LINE_TOOL_MIN_SCREEN_FRACTION;
 }
 
 function screenToWorld(screenX, screenY) {
-  const { width, height } = getViewportSize();
-
   return {
-    x: (screenX - width / 2) / camera.zoom + camera.x,
-    y: (screenY - height / 2) / camera.zoom + camera.y,
+    x: screenX,
+    y: screenY,
   };
 }
 
 function applyCameraTransform() {
-  const { width, height } = getViewportSize();
-  context.translate(width / 2, height / 2);
-  context.scale(camera.zoom, camera.zoom);
-  context.translate(-camera.x, -camera.y);
+}
+
+function isLabelHiddenRenderMode(renderMode) {
+  return renderMode === RENDER_MODE_CONTEXT
+    || renderMode === RENDER_MODE_CHILD_CONTEXT;
+}
+
+function isNodeOnlyRenderMode(renderMode) {
+  return renderMode === RENDER_MODE_CONTEXT_NODE_ONLY
+    || renderMode === RENDER_MODE_CHILD_CONTEXT_NODE_ONLY;
+}
+
+function getGlyphStrokeWidth(baseLineWidth, renderMode) {
+  if (renderMode === RENDER_MODE_FULL || renderMode === RENDER_MODE_FOCUS) {
+    return baseLineWidth * 0.75;
+  }
+
+  if (renderMode === RENDER_MODE_CHILD_CONTEXT || renderMode === RENDER_MODE_CHILD_CONTEXT_NODE_ONLY) {
+    return baseLineWidth * 0.75 * 0.75;
+  }
+
+  return baseLineWidth;
 }
 
 function getStrokeWidthForRadius(radius) {
-  return radius * NODE_LINE_WIDTH_RATIO;
+  return BASE_NODE_LINE_WIDTH;
 }
 
 function getConnectorRadius(node) {
   return node.radius * CONNECTOR_RADIUS_RATIO;
-}
-
-function getFocusZoomForNode(node) {
-  return Math.max(MIN_ZOOM, ROOT_NODE_RADIUS / node.radius);
 }
 
 function getScaledValue(node, ratio) {
@@ -536,7 +551,7 @@ function getChildRadiusForNode(node, slotCount) {
   const borderGap = getScaledValue(node, GROUP_CHILD_BORDER_GAP_RATIO);
   const childGap = getScaledValue(node, GROUP_CHILD_GAP_RATIO);
   const lineGap = getScaledValue(node, GROUP_LINE_GAP_RATIO);
-  const minimumLineLength = getScaledValue(node, GROUP_MIN_LINE_LENGTH_RATIO);
+  const minimumLineLength = getScaledValue(node, GROUP_MIN_LINE_LENGTH_RATIO) * (node.parentNodeGuid ? 2 : 1);
   let childRadius = preferredRadius;
 
   for (let iteration = 0; iteration < 4; iteration += 1) {
@@ -672,6 +687,105 @@ function layoutAllNodes() {
   topLevelNodes.forEach((node) => layoutNode(node));
 }
 
+function getPrimaryRootNode() {
+  return topLevelNodes[0] || null;
+}
+
+function getActiveCanvasRoot() {
+  if (focusedNode && findNodeByGuid(focusedNode.guid)) {
+    return focusedNode;
+  }
+
+  focusedNode = getPrimaryRootNode();
+  return focusedNode;
+}
+
+function getCanvasRoots() {
+  const root = getActiveCanvasRoot();
+  return root ? [root] : [];
+}
+
+function layoutCanvasRoot(root) {
+  if (!root) {
+    return;
+  }
+
+  const { width, height } = getViewportSize();
+  root.x = width / 2;
+  root.y = height / 2;
+  root.radius = ROOT_NODE_RADIUS;
+  layoutNode(root);
+}
+
+function projectRenderableGlyph(glyph, transform) {
+  const projected = Object.assign(Object.create(Object.getPrototypeOf(glyph)), glyph);
+  projected.x = transform.anchorX + (glyph.x - transform.sourceX) * transform.scale;
+  projected.y = transform.anchorY + (glyph.y - transform.sourceY) * transform.scale;
+  projected.radius = glyph.radius * transform.scale;
+  projected.lineWidth = getStrokeWidthForRadius(projected.radius) * PARENT_CONTEXT_LINE_WIDTH_MULTIPLIER;
+  projected.io = {
+    input: null,
+    output: null,
+    outputs: [],
+    param: null,
+  };
+
+  if (glyph.layout) {
+    projected.layout = {
+      orbitRadius: glyph.layout.orbitRadius * transform.scale,
+      outerOrbitRadius: glyph.layout.outerOrbitRadius * transform.scale,
+      glyphRadius: glyph.layout.glyphRadius * transform.scale,
+    };
+  }
+
+  if (glyph.startGlyph) {
+    projected.startGlyph = projectRenderableGlyph(glyph.startGlyph, transform);
+  }
+
+  if (Array.isArray(glyph.glyphs)) {
+    projected.glyphs = glyph.glyphs.map((childGlyph) => projectRenderableGlyph(childGlyph, transform));
+  }
+
+  if (Array.isArray(glyph.outerGlyphs)) {
+    projected.outerGlyphs = glyph.outerGlyphs.map((childGlyph) => projectRenderableGlyph(childGlyph, transform));
+  }
+
+  return projected;
+}
+
+function drawParentContext(activeRoot) {
+  const parentNode = activeRoot?.parentNodeGuid ? findNodeByGuid(activeRoot.parentNodeGuid) : null;
+  if (!parentNode) {
+    return;
+  }
+
+  const anchorX = activeRoot.x;
+  const anchorY = activeRoot.y;
+  layoutNode(parentNode);
+  const focusedNodeInParent = findNodeByGuid(activeRoot.guid, [parentNode]);
+  if (!focusedNodeInParent) {
+    layoutCanvasRoot(activeRoot);
+    return;
+  }
+
+  const scale = ROOT_NODE_RADIUS / Math.max(1, focusedNodeInParent.radius);
+  const projectedParent = projectRenderableGlyph(parentNode, {
+    sourceX: focusedNodeInParent.x,
+    sourceY: focusedNodeInParent.y,
+    anchorX,
+    anchorY,
+    scale,
+  });
+
+  context.save();
+  context.globalAlpha = 0.78;
+  hiddenContextNodeGuid = activeRoot.guid;
+  drawNodeGlyph(projectedParent, false, RENDER_MODE_CONTEXT);
+  hiddenContextNodeGuid = null;
+  context.restore();
+  layoutCanvasRoot(activeRoot);
+}
+
 function drawBackground(width, height) {
   const backgroundGradient = context.createLinearGradient(0, 0, 0, height);
   backgroundGradient.addColorStop(0, 'rgba(240, 224, 187, 0.98)');
@@ -681,22 +795,18 @@ function drawBackground(width, height) {
 }
 
 function drawGrid(width, height) {
-  const topLeft = screenToWorld(0, 0);
-  const bottomRight = screenToWorld(width, height);
-
   context.save();
-  applyCameraTransform();
   context.lineCap = 'butt';
 
   const drawGridLines = (step, strokeStyle, lineWidth) => {
-    const startX = Math.floor(topLeft.x / step) * step;
-    const endX = Math.ceil(bottomRight.x / step) * step;
-    const startY = Math.floor(topLeft.y / step) * step;
-    const endY = Math.ceil(bottomRight.y / step) * step;
+    const startX = 0;
+    const endX = width;
+    const startY = 0;
+    const endY = height;
 
     context.beginPath();
     context.strokeStyle = strokeStyle;
-    context.lineWidth = lineWidth / camera.zoom;
+    context.lineWidth = lineWidth;
 
     for (let x = startX; x <= endX; x += step) {
       context.moveTo(x, startY);
@@ -743,7 +853,7 @@ function drawConnector(node) {
 
   context.save();
   applyCameraTransform();
-  context.lineWidth = node.lineWidth * 0.9;
+  context.lineWidth = node.lineWidth;
   context.globalAlpha *= (isDraggedGlyph ? 0.35 : 1) * connectorAlpha;
   context.strokeStyle = isCurrentNode ? '#a12c2c' : '#17120b';
   context.shadowColor = 'rgba(23, 18, 11, 0.12)';
@@ -760,8 +870,9 @@ function drawConnector(node) {
   context.restore();
 }
 
-function drawStartGlyph(startGlyph) {
+function drawStartGlyph(startGlyph, renderMode = RENDER_MODE_FULL) {
   const isDraggedGlyph = dragState.active && dragState.glyph?.guid === startGlyph.guid;
+  const strokeWidth = getGlyphStrokeWidth(startGlyph.lineWidth, renderMode);
 
   context.save();
   applyCameraTransform();
@@ -771,30 +882,40 @@ function drawStartGlyph(startGlyph) {
   context.lineTo(startGlyph.x, startGlyph.y + startGlyph.radius);
   context.lineTo(startGlyph.x - startGlyph.radius, startGlyph.y);
   context.closePath();
-  context.lineWidth = startGlyph.lineWidth;
+  context.lineWidth = strokeWidth;
   context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
   context.strokeStyle = '#17120b';
   context.shadowColor = 'rgba(23, 18, 11, 0.12)';
   context.shadowBlur = 8 * startGlyph.radius / CHILD_BASE_RADIUS;
   context.stroke();
-  context.shadowBlur = 0;
-  context.fillStyle = '#17120b';
-  context.font = `${GLYPH_FONT_WEIGHT} ${startGlyph.radius * 0.95}px ${GLYPH_FONT_FAMILY}`;
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-  context.fillText('S', startGlyph.x, startGlyph.y + startGlyph.radius * 0.04);
+  if (!isLabelHiddenRenderMode(renderMode)) {
+    context.shadowBlur = 0;
+    context.fillStyle = '#17120b';
+    context.font = `${GLYPH_FONT_WEIGHT} ${startGlyph.radius * 0.95}px ${GLYPH_FONT_FAMILY}`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText('S', startGlyph.x, startGlyph.y + startGlyph.radius * 0.04);
+  }
   context.restore();
 }
 
-function drawNodeGlyph(nodeGlyph, ancestorLineToolActive = true) {
+function drawNodeGlyph(nodeGlyph, ancestorLineToolActive = true, renderMode = RENDER_MODE_FULL) {
   const isDraggedGlyph = dragState.active && dragState.glyph?.guid === nodeGlyph.guid;
-  const nodeLineToolActive = ancestorLineToolActive && lineToolEnabled && shouldApplyLineToolToNode(nodeGlyph);
+  const nodeLineToolActive = renderMode !== RENDER_MODE_CONTEXT
+    && renderMode !== RENDER_MODE_CHILD_CONTEXT
+    && renderMode !== RENDER_MODE_CONTEXT_NODE_ONLY
+    && renderMode !== RENDER_MODE_CHILD_CONTEXT_NODE_ONLY
+    && ancestorLineToolActive
+    && lineToolEnabled
+    && shouldApplyLineToolToNode(nodeGlyph);
 
   context.save();
   context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
   drawNodeRing(nodeGlyph);
-  drawConnector(nodeGlyph);
-  drawNodeProgram(nodeGlyph, nodeLineToolActive);
+  if (!isNodeOnlyRenderMode(renderMode)) {
+    drawConnector(nodeGlyph);
+    drawNodeProgram(nodeGlyph, nodeLineToolActive, renderMode);
+  }
   context.restore();
 }
 
@@ -847,17 +968,17 @@ function drawTextGlyph(glyph, text, fontScale = 0.95) {
   context.fillText(text, glyph.x, glyph.y + glyph.radius * 0.04);
 }
 
-function drawValueGlyph(glyph) {
+function drawValueGlyph(glyph, renderMode = RENDER_MODE_FULL) {
   ensureValueGlyphInputIsValid(glyph);
   const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
   const text = String(glyph.inputIndex ?? 1);
+  const strokeWidth = getGlyphStrokeWidth(glyph.lineWidth, renderMode);
 
   context.save();
   applyCameraTransform();
-  context.lineWidth = glyph.lineWidth;
+  context.lineWidth = strokeWidth;
   context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
   context.strokeStyle = '#17120b';
-  context.setLineDash([glyph.lineWidth * 11, glyph.lineWidth * 9]);
   context.shadowColor = 'rgba(23, 18, 11, 0.12)';
   context.shadowBlur = 8 * glyph.radius / CHILD_BASE_RADIUS;
   context.beginPath();
@@ -867,25 +988,29 @@ function drawValueGlyph(glyph) {
   context.lineTo(glyph.x - glyph.radius, glyph.y);
   context.closePath();
   context.stroke();
-  context.shadowBlur = 0;
-  context.setLineDash([]);
-  drawTextGlyph(glyph, text, 0.6);
+  if (!isLabelHiddenRenderMode(renderMode)) {
+    context.shadowBlur = 0;
+    drawTextGlyph(glyph, text, 0.6);
+  }
   context.restore();
 }
 
-function drawVariableGlyph(glyph) {
+function drawVariableGlyph(glyph, renderMode = RENDER_MODE_FULL) {
   const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
+  const strokeWidth = getGlyphStrokeWidth(glyph.lineWidth, renderMode);
 
   context.save();
   applyCameraTransform();
-  context.lineWidth = glyph.lineWidth;
+  context.lineWidth = strokeWidth;
   context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
   context.strokeStyle = '#17120b';
   context.shadowColor = 'rgba(23, 18, 11, 0.12)';
   context.shadowBlur = 8 * glyph.radius / CHILD_BASE_RADIUS;
   drawPolygonGlyph(glyph, 6, Math.PI / 6);
-  context.shadowBlur = 0;
-  drawTextGlyph(glyph, getGlyphShortLabel(glyph.name, 'VAR'), 0.42);
+  if (!isLabelHiddenRenderMode(renderMode)) {
+    context.shadowBlur = 0;
+    drawTextGlyph(glyph, getGlyphShortLabel(glyph.name, 'VAR'), 0.42);
+  }
   context.restore();
 }
 
@@ -897,38 +1022,40 @@ function getReferenceTarget(glyph) {
   return findGlyphByGuid(glyph.referenceGlyphGuid);
 }
 
-function drawReferenceGlyph(glyph) {
+function drawReferenceGlyph(glyph, renderMode = RENDER_MODE_FULL) {
   const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
   const referenceTarget = getReferenceTarget(glyph);
+  const strokeWidth = getGlyphStrokeWidth(glyph.lineWidth, renderMode);
 
   context.save();
   applyCameraTransform();
-  context.lineWidth = glyph.lineWidth;
+  context.lineWidth = strokeWidth;
   context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
   context.strokeStyle = '#17120b';
-  context.setLineDash([glyph.lineWidth * 11, glyph.lineWidth * 9]);
   context.shadowColor = 'rgba(23, 18, 11, 0.12)';
   context.shadowBlur = 8 * glyph.radius / CHILD_BASE_RADIUS;
   drawPolygonGlyph(glyph, 6, Math.PI / 6);
-  context.shadowBlur = 0;
-  context.setLineDash([]);
-  const referenceLabel = referenceTarget
-    ? (referenceTarget.type === 'boolean'
-      ? getBooleanGlyphLabel(referenceTarget)
-      : getGlyphShortLabel(referenceTarget.name, 'REF'))
-    : 'REF';
-  drawTextGlyph(glyph, referenceLabel, 0.42);
+  if (!isLabelHiddenRenderMode(renderMode)) {
+    context.shadowBlur = 0;
+    const referenceLabel = referenceTarget
+      ? (referenceTarget.type === 'boolean'
+        ? getBooleanGlyphLabel(referenceTarget)
+        : getGlyphShortLabel(referenceTarget.name, 'REF'))
+      : 'REF';
+    drawTextGlyph(glyph, referenceLabel, 0.42);
+  }
   context.restore();
 }
 
-function drawMathGlyph(glyph) {
+function drawMathGlyph(glyph, renderMode = RENDER_MODE_FULL) {
   const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
+  const strokeWidth = getGlyphStrokeWidth(glyph.lineWidth, renderMode);
 
   context.save();
   applyCameraTransform();
   context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
   context.strokeStyle = '#17120b';
-  context.lineWidth = glyph.lineWidth;
+  context.lineWidth = strokeWidth;
   context.lineCap = 'round';
   const width = glyph.radius * 0.82;
   const topY = glyph.y - glyph.radius * 0.16;
@@ -955,12 +1082,13 @@ function drawMathGlyph(glyph) {
   context.restore();
 }
 
-function drawOutputGlyph(glyph) {
+function drawOutputGlyph(glyph, renderMode = RENDER_MODE_FULL) {
   const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
+  const strokeWidth = getGlyphStrokeWidth(glyph.lineWidth, renderMode);
 
   context.save();
   applyCameraTransform();
-  context.lineWidth = glyph.lineWidth;
+  context.lineWidth = strokeWidth;
   context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
   context.strokeStyle = '#17120b';
   context.shadowColor = 'rgba(23, 18, 11, 0.12)';
@@ -969,7 +1097,7 @@ function drawOutputGlyph(glyph) {
   context.restore();
 }
 
-function drawBooleanGlyph(glyph) {
+function drawBooleanGlyph(glyph, renderMode = RENDER_MODE_FULL) {
   if (isOwnedBooleanGlyph(glyph) && !isOwnedBooleanVisible(glyph)) {
     return;
   }
@@ -978,33 +1106,33 @@ function drawBooleanGlyph(glyph) {
   const textRadius = isOwnedBooleanVisible(glyph) && glyph.radius > 0
     ? glyph.radius / 0.75
     : glyph.radius;
+  const strokeWidth = getGlyphStrokeWidth(glyph.lineWidth, renderMode);
 
   context.save();
   applyCameraTransform();
-  context.lineWidth = glyph.lineWidth;
+  context.lineWidth = strokeWidth;
   context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
   context.strokeStyle = '#17120b';
-  if (glyph.ring === 'outer') {
-    context.setLineDash([glyph.lineWidth * 11, glyph.lineWidth * 9]);
-  }
   context.shadowColor = 'rgba(23, 18, 11, 0.12)';
   context.shadowBlur = 8 * glyph.radius / CHILD_BASE_RADIUS;
   drawStarGlyph(glyph, 7, 0.8, -Math.PI / 2);
-  context.shadowBlur = 0;
-  context.setLineDash([]);
-  drawTextGlyph({ ...glyph, radius: textRadius }, getBooleanGlyphLabel(glyph), 0.4);
+  if (!isLabelHiddenRenderMode(renderMode)) {
+    context.shadowBlur = 0;
+    drawTextGlyph({ ...glyph, radius: textRadius }, getBooleanGlyphLabel(glyph), 0.4);
+  }
   context.restore();
 }
 
-function drawIfElseGlyph(glyph) {
+function drawIfElseGlyph(glyph, renderMode = RENDER_MODE_FULL) {
   const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
   const isHoveredGlyph = hoverIfElseGlyphGuid === glyph.guid;
   const ownedBooleans = getOwnedBooleans(glyph);
   const labelOffsets = getIfElseBooleanLabelOffsets(glyph, 0.72);
+  const strokeWidth = getGlyphStrokeWidth(glyph.lineWidth, renderMode);
 
   context.save();
   applyCameraTransform();
-  context.lineWidth = glyph.lineWidth;
+  context.lineWidth = strokeWidth;
   context.globalAlpha *= isDraggedGlyph ? 0.35 : 1;
   context.strokeStyle = '#17120b';
   context.shadowColor = 'rgba(23, 18, 11, 0.12)';
@@ -1015,48 +1143,61 @@ function drawIfElseGlyph(glyph) {
   context.lineTo(glyph.x - glyph.radius * 0.88, glyph.y + glyph.radius * 0.7);
   context.closePath();
   context.stroke();
-  context.shadowBlur = 0;
-  if (isHoveredGlyph) {
-    drawTextGlyph(glyph, 'IF', 0.42);
-  } else {
-    ownedBooleans.forEach((booleanGlyph, index) => {
-      const offset = labelOffsets[index] || labelOffsets[labelOffsets.length - 1];
-      context.fillStyle = '#17120b';
-      context.font = `${GLYPH_FONT_WEIGHT} ${glyph.radius * 0.24}px ${GLYPH_FONT_FAMILY}`;
-      context.textAlign = 'center';
-      context.textBaseline = 'middle';
-      context.fillText(getBooleanGlyphLabel(booleanGlyph), glyph.x + offset.x, glyph.y + offset.y);
-    });
+  if (!isLabelHiddenRenderMode(renderMode)) {
+    context.shadowBlur = 0;
+    if (isHoveredGlyph) {
+      drawTextGlyph(glyph, 'IF', 0.42);
+    } else {
+      ownedBooleans.forEach((booleanGlyph, index) => {
+        const offset = labelOffsets[index] || labelOffsets[labelOffsets.length - 1];
+        context.fillStyle = '#17120b';
+        context.font = `${GLYPH_FONT_WEIGHT} ${glyph.radius * 0.24}px ${GLYPH_FONT_FAMILY}`;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText(getBooleanGlyphLabel(booleanGlyph), glyph.x + offset.x, glyph.y + offset.y);
+      });
+    }
   }
   context.restore();
 }
 
-function drawGlyph(glyph, ancestorLineToolActive = true) {
+function drawGlyph(glyph, ancestorLineToolActive = true, renderMode = RENDER_MODE_FULL) {
+  if (
+    glyph.type === 'node'
+    && glyph.guid === hiddenContextNodeGuid
+    && (
+      renderMode === RENDER_MODE_CONTEXT
+      || renderMode === RENDER_MODE_CONTEXT_NODE_ONLY
+    )
+  ) {
+    return;
+  }
+
   switch (glyph.type) {
     case 'node':
-      drawNodeGlyph(glyph, ancestorLineToolActive);
+      drawNodeGlyph(glyph, ancestorLineToolActive, renderMode);
       break;
     case 'variable':
-      drawVariableGlyph(glyph);
+      drawVariableGlyph(glyph, renderMode);
       break;
     case 'value':
-      drawValueGlyph(glyph);
+      drawValueGlyph(glyph, renderMode);
       break;
     case 'add':
     case 'subtract':
-      drawMathGlyph(glyph);
+      drawMathGlyph(glyph, renderMode);
       break;
     case 'reference':
-      drawReferenceGlyph(glyph);
+      drawReferenceGlyph(glyph, renderMode);
       break;
     case 'output':
-      drawOutputGlyph(glyph);
+      drawOutputGlyph(glyph, renderMode);
       break;
     case 'boolean':
-      drawBooleanGlyph(glyph);
+      drawBooleanGlyph(glyph, renderMode);
       break;
     case 'ifelse':
-      drawIfElseGlyph(glyph);
+      drawIfElseGlyph(glyph, renderMode);
       break;
     default:
       break;
@@ -1080,45 +1221,7 @@ function getGlyphOuterRadius(glyph, unitX, unitY) {
   return getGlyphBoundaryDistance(glyph, unitX, unitY) + glyph.lineWidth / 2;
 }
 
-function drawArrowMarker(glyph, node, pointsTowardCenter) {
-  const dx = node.x - glyph.x;
-  const dy = node.y - glyph.y;
-  const distance = Math.hypot(dx, dy);
-
-  if (distance === 0) {
-    return;
-  }
-
-  const inwardX = dx / distance;
-  const inwardY = dy / distance;
-  const directionX = pointsTowardCenter ? inwardX : -inwardX;
-  const directionY = pointsTowardCenter ? inwardY : -inwardY;
-  const boundaryDistance = getGlyphBoundaryDistance(glyph, inwardX, inwardY);
-  const arrowGap = node.radius * GROUP_ARROW_GAP_RATIO;
-  const anchorX = glyph.x + inwardX * (boundaryDistance + arrowGap);
-  const anchorY = glyph.y + inwardY * (boundaryDistance + arrowGap);
-  const arrowLength = glyph.radius * 0.4;
-  const arrowHalfWidth = arrowLength * 0.35;
-  const tipX = anchorX + directionX * (arrowLength / 2);
-  const tipY = anchorY + directionY * (arrowLength / 2);
-  const baseX = anchorX - directionX * (arrowLength / 2);
-  const baseY = anchorY - directionY * (arrowLength / 2);
-  const perpX = -directionY;
-  const perpY = directionX;
-
-  context.save();
-  applyCameraTransform();
-  context.fillStyle = '#17120b';
-  context.beginPath();
-  context.moveTo(tipX, tipY);
-  context.lineTo(baseX + perpX * arrowHalfWidth, baseY + perpY * arrowHalfWidth);
-  context.lineTo(baseX - perpX * arrowHalfWidth, baseY - perpY * arrowHalfWidth);
-  context.closePath();
-  context.fill();
-  context.restore();
-}
-
-function drawNodeConnections(node, nodeLineToolActive) {
+function drawNodeConnections(node, nodeLineToolActive, renderMode = RENDER_MODE_FULL) {
   if (!node.layout) {
     return;
   }
@@ -1154,11 +1257,10 @@ function drawNodeConnections(node, nodeLineToolActive) {
     const lineStartY = fromGlyph.y + unitY * currentOffset;
 
     context.beginPath();
-    context.lineWidth = node.lineWidth * 0.9;
+    context.lineWidth = node.lineWidth;
     context.moveTo(lineStartX, lineStartY);
     context.lineTo(toX, toY);
     context.stroke();
-    drawMidArrow(lineStartX, lineStartY, toX, toY);
     drawEndSquare(toX, toY);
 
     if (nodeLineToolActive) {
@@ -1185,40 +1287,6 @@ function drawNodeConnections(node, nodeLineToolActive) {
     return { x: lineStartX, y: lineStartY };
   };
 
-  const drawMidArrow = (startX, startY, endX, endY) => {
-    const midX = (startX + endX) / 2;
-    const midY = (startY + endY) / 2;
-    const directionX = endX - startX;
-    const directionY = endY - startY;
-    const directionLength = Math.hypot(directionX, directionY);
-
-    if (directionLength === 0) {
-      return;
-    }
-
-    const unitX = directionX / directionLength;
-    const unitY = directionY / directionLength;
-    const arrowLength = Math.max(node.lineWidth * 5, node.radius * 0.08);
-    const arrowHalfWidth = arrowLength * 0.32;
-    const tipX = midX + unitX * (arrowLength / 2);
-    const tipY = midY + unitY * (arrowLength / 2);
-    const baseX = midX - unitX * (arrowLength / 2);
-    const baseY = midY - unitY * (arrowLength / 2);
-    const perpX = -unitY;
-    const perpY = unitX;
-
-    context.save();
-    context.fillStyle = 'rgba(23, 18, 11, 0.45)';
-    context.shadowBlur = 0;
-    context.beginPath();
-    context.moveTo(tipX, tipY);
-    context.lineTo(baseX + perpX * arrowHalfWidth, baseY + perpY * arrowHalfWidth);
-    context.lineTo(baseX - perpX * arrowHalfWidth, baseY - perpY * arrowHalfWidth);
-    context.closePath();
-    context.fill();
-    context.restore();
-  };
-
   const drawEndSquare = (endX, endY) => {
     if (!nodeLineToolActive) {
       return;
@@ -1234,7 +1302,7 @@ function drawNodeConnections(node, nodeLineToolActive) {
 
   const drawIoCircle = (x, y, dashed, kind, filled = false, sizeScale = 1) => {
     const circleRadius = Math.max(node.lineWidth * 2.3, node.radius * 0.036) * sizeScale;
-    const circleLineWidth = Math.max(1, node.lineWidth * 0.9);
+    const circleLineWidth = node.lineWidth;
 
     context.save();
     context.lineWidth = circleLineWidth;
@@ -1272,6 +1340,7 @@ function drawNodeConnections(node, nodeLineToolActive) {
 
   const circleOffset = Math.max(node.lineWidth * 2.6, node.radius * 0.03);
   const circleRadius = Math.max(node.lineWidth * 2.3, node.radius * 0.036);
+  const showIoMarkers = lineToolEnabled;
   const ownedBooleans = node.glyphs.filter(isOwnedBooleanGlyph);
   const ringGlyphs = [...execGlyphs, ...node.outerGlyphs, ...ownedBooleans];
 
@@ -1353,11 +1422,10 @@ function drawNodeConnections(node, nodeLineToolActive) {
       context.strokeStyle = 'rgba(23, 18, 11, 0.9)';
     }
     context.beginPath();
-    context.lineWidth = node.lineWidth * 0.9;
+    context.lineWidth = node.lineWidth;
     context.moveTo(fromPoint.x, fromPoint.y);
     context.lineTo(toPoint.x, toPoint.y);
     context.stroke();
-    drawMidArrow(fromPoint.x, fromPoint.y, toPoint.x, toPoint.y);
     drawEndSquare(toPoint.x, toPoint.y);
     context.restore();
 
@@ -1412,14 +1480,21 @@ function drawNodeConnections(node, nodeLineToolActive) {
       const isConnectedOutput = Boolean(outputTargetBySource.get(glyph.guid));
       const isConnectedParam = Boolean(paramSourceByTarget.get(glyph.guid));
 
-      if (glyph.io?.input && !isOuterDataGlyph) {
+      if (
+        showIoMarkers
+        && renderMode !== RENDER_MODE_CONTEXT
+        && renderMode !== RENDER_MODE_CHILD_CONTEXT
+        && renderMode !== RENDER_MODE_CHILD_CONTEXT_NODE_ONLY
+        && glyph.io?.input
+        && !isOuterDataGlyph
+      ) {
         if (glyph.type === 'start') {
           drawIoCircle(
             glyph.io.input.x,
             glyph.io.input.y,
             false,
             'param-input',
-            !nodeLineToolActive && isConnectedParam,
+            false,
             !nodeLineToolActive ? 0.7 : 1,
           );
           paramInputPoints.set(glyph.guid, glyph.io.input);
@@ -1429,7 +1504,7 @@ function drawNodeConnections(node, nodeLineToolActive) {
             glyph.io.input.y,
             true,
             'input',
-            !nodeLineToolActive && isConnectedInput,
+            false,
             !nodeLineToolActive ? 0.7 : 1,
           );
           inputPoints.set(glyph.guid, glyph.io.input);
@@ -1439,28 +1514,41 @@ function drawNodeConnections(node, nodeLineToolActive) {
       const outputConnectors = glyph.io?.outputs?.length ? glyph.io.outputs : (glyph.io?.output ? [glyph.io.output] : []);
       outputConnectors.forEach((outputConnector, index) => {
         const outputKey = createOutputKey(glyph.guid, outputConnector.outputIndex ?? index);
-        const outputKind = isOuterDataGlyph
-          ? 'outer-output'
-          : ((outputConnector.outputIndex ?? index) === 1 ? 'secondary-output' : 'output');
-        drawIoCircle(
-          outputConnector.x,
-          outputConnector.y,
-          true,
-          outputKind,
-          !nodeLineToolActive && Boolean(outputTargetBySource.get(outputKey)),
-          !nodeLineToolActive ? 0.7 : 1,
-        );
+        if (
+          showIoMarkers
+          && renderMode !== RENDER_MODE_CONTEXT
+          && renderMode !== RENDER_MODE_CHILD_CONTEXT
+          && renderMode !== RENDER_MODE_CHILD_CONTEXT_NODE_ONLY
+        ) {
+          const outputKind = isOuterDataGlyph
+            ? 'outer-output'
+            : ((outputConnector.outputIndex ?? index) === 1 ? 'secondary-output' : 'output');
+          drawIoCircle(
+            outputConnector.x,
+            outputConnector.y,
+            true,
+            outputKind,
+            false,
+            !nodeLineToolActive ? 0.7 : 1,
+          );
+        }
 
         outputPoints.set(outputKey, outputConnector);
       });
 
-      if (glyph.io?.param) {
+      if (
+        showIoMarkers
+        && renderMode !== RENDER_MODE_CONTEXT
+        && renderMode !== RENDER_MODE_CHILD_CONTEXT
+        && renderMode !== RENDER_MODE_CHILD_CONTEXT_NODE_ONLY
+        && glyph.io?.param
+      ) {
         drawIoCircle(
           glyph.io.param.x,
           glyph.io.param.y,
           false,
           'param-input',
-          !nodeLineToolActive && isConnectedParam,
+          false,
           !nodeLineToolActive ? 0.7 : 1,
         );
         paramInputPoints.set(glyph.guid, glyph.io.param);
@@ -1483,7 +1571,7 @@ function drawNodeConnections(node, nodeLineToolActive) {
   context.restore();
 }
 
-function drawNodeProgram(node, nodeLineToolActive) {
+function drawNodeProgram(node, nodeLineToolActive, renderMode = RENDER_MODE_FULL) {
   if (!node.layout) {
     return;
   }
@@ -1494,14 +1582,31 @@ function drawNodeProgram(node, nodeLineToolActive) {
     node.__lineToolCache = null;
   }
 
-  drawNodeConnections(node, nodeLineToolActive);
-  drawStartGlyph(node.startGlyph);
-  node.glyphs.forEach((glyph) => drawGlyph(glyph, nodeLineToolActive));
-  node.outerGlyphs.forEach((glyph) => drawGlyph(glyph, nodeLineToolActive));
-  drawArrowMarker(node.startGlyph, node, false);
-  if (layoutGlyphs.length > 0) {
-    drawArrowMarker(layoutGlyphs[layoutGlyphs.length - 1], node, true);
-  }
+  drawNodeConnections(node, nodeLineToolActive, renderMode);
+  drawStartGlyph(node.startGlyph, renderMode);
+  node.glyphs.forEach((glyph) => {
+    let glyphRenderMode = renderMode;
+    if (isNode(glyph)) {
+      if (renderMode === RENDER_MODE_FOCUS) {
+        glyphRenderMode = RENDER_MODE_CHILD_CONTEXT;
+      } else if (renderMode === RENDER_MODE_CONTEXT) {
+        glyphRenderMode = RENDER_MODE_CONTEXT_NODE_ONLY;
+      } else if (renderMode === RENDER_MODE_CHILD_CONTEXT) {
+        glyphRenderMode = RENDER_MODE_CHILD_CONTEXT_NODE_ONLY;
+      }
+    } else if (renderMode === RENDER_MODE_FOCUS) {
+      glyphRenderMode = RENDER_MODE_FULL;
+    } else if (renderMode === RENDER_MODE_CHILD_CONTEXT) {
+      glyphRenderMode = RENDER_MODE_CHILD_CONTEXT;
+    }
+
+    drawGlyph(glyph, nodeLineToolActive, glyphRenderMode);
+  });
+  node.outerGlyphs.forEach((glyph) => drawGlyph(
+    glyph,
+    nodeLineToolActive,
+    renderMode === RENDER_MODE_FOCUS ? RENDER_MODE_FULL : renderMode,
+  ));
 }
 
 function drawGhostGlyph() {
@@ -1564,7 +1669,7 @@ function drawGhostWire() {
   const start = wireDragState.fromPoint;
   const end = wireDragState.toWorld;
   const node = wireDragState.node;
-  const lineWidth = node.lineWidth * 0.9;
+  const lineWidth = node.lineWidth;
 
   context.save();
   applyCameraTransform();
@@ -1576,31 +1681,6 @@ function drawGhostWire() {
   context.moveTo(start.x, start.y);
   context.lineTo(end.x, end.y);
   context.stroke();
-
-  const midX = (start.x + end.x) / 2;
-  const midY = (start.y + end.y) / 2;
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const dist = Math.hypot(dx, dy);
-  if (dist > 0) {
-    const unitX = dx / dist;
-    const unitY = dy / dist;
-    const arrowLength = Math.max(node.lineWidth * 5, node.radius * 0.08);
-    const arrowHalfWidth = arrowLength * 0.32;
-    const tipX = midX + unitX * (arrowLength / 2);
-    const tipY = midY + unitY * (arrowLength / 2);
-    const baseX = midX - unitX * (arrowLength / 2);
-    const baseY = midY - unitY * (arrowLength / 2);
-    const perpX = -unitY;
-    const perpY = unitX;
-    context.fillStyle = 'rgba(23, 18, 11, 0.45)';
-    context.beginPath();
-    context.moveTo(tipX, tipY);
-    context.lineTo(baseX + perpX * arrowHalfWidth, baseY + perpY * arrowHalfWidth);
-    context.lineTo(baseX - perpX * arrowHalfWidth, baseY - perpY * arrowHalfWidth);
-    context.closePath();
-    context.fill();
-  }
 
   if (lineToolEnabled) {
     const squareSize = Math.max(node.lineWidth * 3.2, node.radius * 0.05);
@@ -1614,11 +1694,17 @@ function drawGhostWire() {
 function drawScene() {
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
+  const canvasRoots = getCanvasRoots();
+
+  canvasRoots.forEach((node) => layoutCanvasRoot(node));
 
   context.clearRect(0, 0, width, height);
   drawBackground(width, height);
   drawGrid(width, height);
-  topLevelNodes.forEach((node) => drawNodeGlyph(node, true));
+  canvasRoots.forEach((node) => {
+    drawParentContext(node);
+    drawNodeGlyph(node, true, RENDER_MODE_FOCUS);
+  });
   drawGhostGlyph();
   drawGhostWire();
 }
@@ -1639,8 +1725,9 @@ function findNodeHit(node, worldX, worldY) {
 }
 
 function findDropTarget(worldX, worldY) {
-  for (let index = topLevelNodes.length - 1; index >= 0; index -= 1) {
-    const match = findNodeHit(topLevelNodes[index], worldX, worldY);
+  const canvasRoots = getCanvasRoots();
+  for (let index = canvasRoots.length - 1; index >= 0; index -= 1) {
+    const match = findNodeHit(canvasRoots[index], worldX, worldY);
     if (match) {
       return match;
     }
@@ -1831,11 +1918,11 @@ function isPointInsideConnector(node, worldX, worldY) {
     || (Math.abs(localX) + Math.abs(localY) <= radius);
 }
 
-function findConnectorTarget(node, worldX, worldY) {
+function findConnectorTarget(node, worldX, worldY, depth = 0, maxDepth = Number.POSITIVE_INFINITY) {
   for (let index = node.glyphs.length - 1; index >= 0; index -= 1) {
     const glyph = node.glyphs[index];
-    if (isNode(glyph)) {
-      const nested = findConnectorTarget(glyph, worldX, worldY);
+    if (isNode(glyph) && depth < maxDepth) {
+      const nested = findConnectorTarget(glyph, worldX, worldY, depth + 1, maxDepth);
       if (nested) {
         return nested;
       }
@@ -1914,8 +2001,9 @@ function findGlyphHit(node, worldX, worldY, predicate = () => true) {
 }
 
 function findCanvasGlyph(worldX, worldY, predicate = () => true) {
-  for (let index = topLevelNodes.length - 1; index >= 0; index -= 1) {
-    const glyph = findGlyphHit(topLevelNodes[index], worldX, worldY, predicate);
+  const canvasRoots = getCanvasRoots();
+  for (let index = canvasRoots.length - 1; index >= 0; index -= 1) {
+    const glyph = findGlyphHit(canvasRoots[index], worldX, worldY, predicate);
     if (glyph) {
       return glyph;
     }
@@ -1953,9 +2041,6 @@ function getGlyphTooltip(glyph) {
 
 function focusNode(node) {
   focusedNode = node;
-  camera.x = node.x;
-  camera.y = node.y;
-  camera.zoom = getFocusZoomForNode(node);
   drawScene();
 }
 
@@ -1981,8 +2066,10 @@ function updateCanvasHover(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
   const worldPoint = screenToWorld(clientX - rect.left, clientY - rect.top);
   let connectorTarget = null;
-  for (let index = topLevelNodes.length - 1; index >= 0; index -= 1) {
-    connectorTarget = findConnectorTarget(topLevelNodes[index], worldPoint.x, worldPoint.y);
+  const canvasRoots = getCanvasRoots();
+  const maxConnectorDepth = focusedNode ? 1 : Number.POSITIVE_INFINITY;
+  for (let index = canvasRoots.length - 1; index >= 0; index -= 1) {
+    connectorTarget = findConnectorTarget(canvasRoots[index], worldPoint.x, worldPoint.y, 0, maxConnectorDepth);
     if (connectorTarget) {
       break;
     }
@@ -2090,8 +2177,9 @@ function findLineToolStartTarget(worldX, worldY) {
     return null;
   }
 
-  for (let index = topLevelNodes.length - 1; index >= 0; index -= 1) {
-    const target = findLineToolStartTargetInNode(topLevelNodes[index], worldX, worldY);
+  const canvasRoots = getCanvasRoots();
+  for (let index = canvasRoots.length - 1; index >= 0; index -= 1) {
+    const target = findLineToolStartTargetInNode(canvasRoots[index], worldX, worldY);
     if (target) {
       return target;
     }
@@ -3154,27 +3242,22 @@ function spawnGlyphAtDrop(glyphType, clientX, clientY) {
     return;
   }
 
-  const targetNode = findDropTarget(worldPoint.x, worldPoint.y) || topLevelNodes[0];
+  const targetNode = findDropTarget(worldPoint.x, worldPoint.y) || getActiveCanvasRoot() || topLevelNodes[0];
   appendGlyphToNode(targetNode, glyphType);
 }
 
 function recenterCanvas() {
-  camera.x = 0;
-  camera.y = 0;
-  camera.zoom = 1;
+  focusedNode = getPrimaryRootNode();
   drawScene();
 }
 
-function zoomAtPoint(nextZoom, screenX, screenY) {
-  const clampedZoom = Math.max(MIN_ZOOM, nextZoom);
-  const beforeZoomPoint = screenToWorld(screenX, screenY);
+function focusParentNode() {
+  const parentNode = focusedNode?.parentNodeGuid ? findNodeByGuid(focusedNode.parentNodeGuid) : null;
+  if (!parentNode) {
+    return;
+  }
 
-  camera.zoom = clampedZoom;
-
-  const { width, height } = getViewportSize();
-  camera.x = beforeZoomPoint.x - (screenX - width / 2) / camera.zoom;
-  camera.y = beforeZoomPoint.y - (screenY - height / 2) / camera.zoom;
-  drawScene();
+  focusNode(parentNode);
 }
 
 function stopPanning(pointerId) {
@@ -3223,6 +3306,10 @@ trayToggle.addEventListener('click', () => {
 
 recenterCanvasButton.addEventListener('click', () => {
   recenterCanvas();
+});
+
+focusParentNodeButton?.addEventListener('click', () => {
+  focusParentNode();
 });
 
 playProgramButton.addEventListener('click', () => {
@@ -3473,8 +3560,10 @@ canvas.addEventListener('pointerdown', (event) => {
   }
 
   let connectorTarget = null;
-  for (let index = topLevelNodes.length - 1; index >= 0; index -= 1) {
-    connectorTarget = findConnectorTarget(topLevelNodes[index], worldPoint.x, worldPoint.y);
+  const canvasRoots = getCanvasRoots();
+  const maxConnectorDepth = focusedNode ? 1 : Number.POSITIVE_INFINITY;
+  for (let index = canvasRoots.length - 1; index >= 0; index -= 1) {
+    connectorTarget = findConnectorTarget(canvasRoots[index], worldPoint.x, worldPoint.y, 0, maxConnectorDepth);
     if (connectorTarget) {
       break;
     }
@@ -3507,13 +3596,6 @@ canvas.addEventListener('pointerdown', (event) => {
     drawScene();
     return;
   }
-
-  panState.active = true;
-  panState.moved = false;
-  panState.pointerId = event.pointerId;
-  panState.lastX = event.clientX;
-  panState.lastY = event.clientY;
-  canvas.setPointerCapture(event.pointerId);
 });
 
 canvas.addEventListener('pointermove', (event) => {
@@ -3555,11 +3637,8 @@ canvas.addEventListener('pointermove', (event) => {
     panState.moved = true;
   }
 
-  camera.x -= deltaX / camera.zoom;
-  camera.y -= deltaY / camera.zoom;
   panState.lastX = event.clientX;
   panState.lastY = event.clientY;
-  drawScene();
 });
 
 canvas.addEventListener('pointerup', (event) => {
@@ -3596,8 +3675,10 @@ canvas.addEventListener('pointerup', (event) => {
     const rect = canvas.getBoundingClientRect();
     const worldPoint = screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
 
-    for (let index = topLevelNodes.length - 1; index >= 0; index -= 1) {
-      const connectorTarget = findConnectorTarget(topLevelNodes[index], worldPoint.x, worldPoint.y);
+    const canvasRoots = getCanvasRoots();
+    const maxConnectorDepth = focusedNode ? 1 : Number.POSITIVE_INFINITY;
+    for (let index = canvasRoots.length - 1; index >= 0; index -= 1) {
+      const connectorTarget = findConnectorTarget(canvasRoots[index], worldPoint.x, worldPoint.y, 0, maxConnectorDepth);
       if (connectorTarget) {
         focusNode(connectorTarget);
         stopPanning(event.pointerId);
@@ -3656,12 +3737,6 @@ canvas.addEventListener('pointerleave', () => {
 
 canvas.addEventListener('wheel', (event) => {
   event.preventDefault();
-
-  const rect = canvas.getBoundingClientRect();
-  const pointerX = event.clientX - rect.left;
-  const pointerY = event.clientY - rect.top;
-  const zoomFactor = event.deltaY < 0 ? 1.1 : 0.9;
-  zoomAtPoint(camera.zoom * zoomFactor, pointerX, pointerY);
 }, { passive: false });
 
 ['dragenter', 'dragover'].forEach((eventName) => {
