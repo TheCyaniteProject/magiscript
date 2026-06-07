@@ -52,7 +52,65 @@ class BooleanGlyph extends Glyph {
       : { title: 'Boolean', description: `Operator: ${BooleanGlyph.getOperatorLabel(this.operation)}` };
   }
 
+  canBeAddedToOuterRing() {
+    return true;
+  }
+
+  getParamIOPorts() {
+    if (this.ring === 'outer' || this.ownerIfGlyphGuid) {
+      return [];
+    }
+
+    return [{ defaultAngle: -Math.PI / 2 }];
+  }
+
   isClickable() {
+    return true;
+  }
+
+  getEditSchema({ normalizeBooleanOperation }) {
+    this.operation = normalizeBooleanOperation(this.operation);
+    const isOuterGlyph = this.ring === 'outer';
+
+    return {
+      title: 'Edit Boolean',
+      fields: isOuterGlyph
+        ? [
+          {
+            key: 'checked',
+            label: 'Value',
+            type: 'select',
+            value: this.checked ? 'true' : 'false',
+            options: [
+              { value: 'true', label: 'True' },
+              { value: 'false', label: 'False' },
+            ],
+          },
+        ]
+        : [
+          {
+            key: 'operation',
+            label: 'Operator',
+            type: 'select',
+            value: this.operation,
+            options: [
+              { value: 'less', label: 'LT - Less' },
+              { value: 'greater', label: 'GT - Greater' },
+              { value: 'equal', label: 'EQ - Equal' },
+              { value: 'not-equal', label: 'NE - Not Equal' },
+            ],
+          },
+        ],
+    };
+  }
+
+  applyEditValues(values, { normalizeBooleanOperation }) {
+    if (this.ring === 'outer') {
+      this.checked = values.checked === 'true';
+    } else {
+      this.operation = normalizeBooleanOperation(values.operation);
+    }
+
     return true;
   }
 

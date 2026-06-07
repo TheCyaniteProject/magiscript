@@ -7,6 +7,10 @@ class SetValueGlyph extends Glyph {
     return { title: 'Set Value', description: 'Sets previous variable/reference to Param input.' };
   }
 
+  getParamIOPorts() {
+    return [{ defaultAngle: -Math.PI / 2 }];
+  }
+
   execute({
     node,
     currentValue,

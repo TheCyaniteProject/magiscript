@@ -36,6 +36,8 @@ class ProgramPersistenceService {
         parentNodeGuid: glyph.parentNodeGuid,
         nextGlyphGuid: glyph.getOutputTarget(0),
         ...(glyph.getOutputTarget(1) !== null ? { nextGlyphGuidFalse: glyph.getOutputTarget(1) } : {}),
+        ...((glyph.getSerializedOutputTargets?.() || []).length > 0 ? { outputTargets: glyph.getSerializedOutputTargets() } : {}),
+        ...((glyph.getSerializedOutputTargetPorts?.() || []).length > 0 ? { outputTargetPorts: glyph.getSerializedOutputTargetPorts() } : {}),
         ...(glyph.ring ? { ring: glyph.ring } : {}),
         ...(glyph.name !== undefined ? { name: glyph.name } : {}),
         ...(glyph.value !== undefined ? { value: glyph.value } : {}),
@@ -57,6 +59,8 @@ class ProgramPersistenceService {
         parentNodeGuid: glyph.parentNodeGuid,
         nextGlyphGuid: glyph.getOutputTarget(0),
         ...(glyph.getOutputTarget(1) !== null ? { nextGlyphGuidFalse: glyph.getOutputTarget(1) } : {}),
+        ...((glyph.getSerializedOutputTargets?.() || []).length > 0 ? { outputTargets: glyph.getSerializedOutputTargets() } : {}),
+        ...((glyph.getSerializedOutputTargetPorts?.() || []).length > 0 ? { outputTargetPorts: glyph.getSerializedOutputTargetPorts() } : {}),
         ...(glyph.ring ? { ring: glyph.ring } : {}),
         ...(glyph.name !== undefined ? { name: glyph.name } : {}),
         ...(glyph.value !== undefined ? { value: glyph.value } : {}),
@@ -205,8 +209,30 @@ class ProgramPersistenceService {
         break;
     }
 
-    glyph.setOutputTarget(serialized.nextGlyphGuid ?? null, 0);
-    glyph.setOutputTarget(serialized.nextGlyphGuidFalse ?? null, 1);
+    const outputTargetPortByIndex = new Map(
+      Array.isArray(serialized.outputTargetPorts)
+        ? serialized.outputTargetPorts
+          .filter((entry) => entry && Number.isFinite(entry.outputIndex))
+          .map((entry) => [entry.outputIndex, {
+            kind: entry.kind === 'param' ? 'param' : 'input',
+            index: Number.isFinite(entry.index) ? entry.index : 0,
+          }])
+        : [],
+    );
+
+    glyph.setOutputTarget(serialized.nextGlyphGuid ?? null, 0, outputTargetPortByIndex.get(0) || null);
+    glyph.setOutputTarget(serialized.nextGlyphGuidFalse ?? null, 1, outputTargetPortByIndex.get(1) || null);
+    if (Array.isArray(serialized.outputTargets)) {
+      serialized.outputTargets
+        .filter((entry) => entry && Number.isFinite(entry.outputIndex) && typeof entry.targetGuid === 'string')
+        .forEach((entry) => {
+          if (entry.outputIndex <= 1) {
+            return;
+          }
+
+          glyph.setOutputTarget(entry.targetGuid, entry.outputIndex, outputTargetPortByIndex.get(entry.outputIndex) || null);
+        });
+    }
     glyph.x = 0;
     glyph.y = 0;
     glyph.radius = CHILD_BASE_RADIUS;

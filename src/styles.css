@@ -576,6 +576,66 @@ button {
   color: var(--ink);
 }
 
+.glyph-popup {
+  position: fixed;
+  z-index: 26;
+  min-width: 240px;
+  max-width: min(92vw, 360px);
+  padding: 10px;
+  border: 1px solid rgba(23, 18, 11, 0.9);
+  background: rgba(246, 234, 200, 0.98);
+  box-shadow: 0 12px 22px rgba(33, 20, 7, 0.2);
+}
+
+.glyph-popup__title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.glyph-popup__body {
+  display: grid;
+  gap: 8px;
+}
+
+.glyph-popup__field {
+  display: grid;
+  gap: 4px;
+}
+
+.glyph-popup__label {
+  font-size: 0.86rem;
+}
+
+.glyph-popup__input {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(23, 18, 11, 0.85);
+  background: rgba(255, 252, 240, 0.96);
+  color: var(--ink);
+}
+
+.glyph-popup__actions {
+  display: flex;
+  justify-content: end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.glyph-popup__actions button {
+  min-width: 80px;
+  height: 32px;
+  border: 1px solid rgba(23, 18, 11, 0.85);
+  background: rgba(246, 234, 200, 0.94);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.glyph-popup__actions button:hover {
+  background: rgba(255, 247, 220, 1);
+}
+
 .stage-wrap {
   position: relative;
   min-height: 100vh;

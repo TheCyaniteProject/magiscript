@@ -8,6 +8,10 @@ class SubtractGlyph extends Glyph {
     return { title: 'Subtract', description: `Operand: ${this.operand}` };
   }
 
+  getParamIOPorts() {
+    return [{ defaultAngle: -Math.PI / 2 }];
+  }
+
   execute({
     node,
     currentValue,

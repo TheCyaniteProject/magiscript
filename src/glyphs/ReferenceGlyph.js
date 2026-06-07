@@ -12,7 +12,38 @@ class ReferenceGlyph extends Glyph {
     };
   }
 
+  canBeAddedToOuterRing() {
+    return true;
+  }
+
   isClickable() {
+    return true;
+  }
+
+  getEditSchema({ getAllReferenceableGlyphs, getReferenceableGlyphLabel }) {
+    const referenceable = getAllReferenceableGlyphs().filter((candidate) => candidate.guid !== this.guid);
+    return {
+      title: 'Edit Reference',
+      fields: [
+        {
+          key: 'referenceGlyphGuid',
+          label: 'Target',
+          type: 'select',
+          value: this.referenceGlyphGuid || '',
+          options: [
+            { value: '', label: 'None' },
+            ...referenceable.map((candidate) => ({
+              value: candidate.guid,
+              label: getReferenceableGlyphLabel(candidate),
+            })),
+          ],
+        },
+      ],
+    };
+  }
+
+  applyEditValues(values) {
+    this.referenceGlyphGuid = values.referenceGlyphGuid || null;
     return true;
   }
 

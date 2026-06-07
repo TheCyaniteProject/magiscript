@@ -12,6 +12,46 @@ class ValueGlyph extends Glyph {
     };
   }
 
+  canBeAddedToOuterRing() {
+    return true;
+  }
+
+  isClickable() {
+    return true;
+  }
+
+  getEditSchema({ findNodeByGuid, nodeHasParamInputConnection, ensureValueGlyphInputIsValid }) {
+    const parentNode = this.parentNodeGuid ? findNodeByGuid(this.parentNodeGuid) : null;
+    if (!parentNode) {
+      return null;
+    }
+
+    ensureValueGlyphInputIsValid(this);
+    const hasParam = nodeHasParamInputConnection(parentNode);
+    const options = [{ value: '1', label: '1 - Direct' }];
+    if (hasParam) {
+      options.push({ value: '2', label: '2 - Param' });
+    }
+
+    return {
+      title: 'Edit Value Input',
+      fields: [
+        {
+          key: 'inputIndex',
+          label: 'Input',
+          type: 'select',
+          value: String(this.inputIndex ?? 1),
+          options,
+        },
+      ],
+    };
+  }
+
+  applyEditValues(values) {
+    this.inputIndex = Number(values.inputIndex) === 2 ? 2 : 1;
+    return true;
+  }
+
   execute({ currentValue }) {
     return currentValue;
   }

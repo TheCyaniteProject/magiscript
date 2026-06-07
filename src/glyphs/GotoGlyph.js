@@ -12,7 +12,38 @@ class GotoGlyph extends Glyph {
     };
   }
 
+  getOutputIOPorts() {
+    return [];
+  }
+
   isClickable() {
+    return true;
+  }
+
+  getEditSchema({ getAllLabelGlyphs, getJumpTargetLabel }) {
+    const labels = getAllLabelGlyphs();
+    return {
+      title: 'Edit Goto',
+      fields: [
+        {
+          key: 'targetLabelGuid',
+          label: 'Target',
+          type: 'select',
+          value: this.targetLabelGuid || '',
+          options: [
+            { value: '', label: labels.length > 0 ? 'None' : 'No labels available' },
+            ...labels.map((labelGlyph) => ({
+              value: labelGlyph.guid,
+              label: getJumpTargetLabel(labelGlyph),
+            })),
+          ],
+        },
+      ],
+    };
+  }
+
+  applyEditValues(values) {
+    this.targetLabelGuid = values.targetLabelGuid || null;
     return true;
   }
 

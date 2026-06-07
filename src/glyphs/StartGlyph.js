@@ -20,6 +20,20 @@ class StartGlyph extends Glyph {
   isClickable() {
     return true;
   }
+
+  getEditSchema() {
+    return {
+      title: 'Edit Start',
+      fields: [
+        { key: 'name', label: 'Name', type: 'text', value: this.name || '' },
+      ],
+    };
+  }
+
+  applyEditValues(values, { createNodeName }) {
+    this.name = String(values.name || '').trim() || createNodeName();
+    return true;
+  }
 }
 
 globalThis.StartGlyph = StartGlyph;

@@ -13,7 +13,27 @@ class VariableGlyph extends Glyph {
     return this.name;
   }
 
+  canBeAddedToOuterRing() {
+    return true;
+  }
+
   isClickable() {
+    return true;
+  }
+
+  getEditSchema() {
+    return {
+      title: 'Edit Variable',
+      fields: [
+        { key: 'name', label: 'Name', type: 'text', value: this.name || '' },
+        { key: 'value', label: 'Value', type: 'text', value: this.value === 'null' ? '' : (this.value || '') },
+      ],
+    };
+  }
+
+  applyEditValues(values, { createVariableName }) {
+    this.name = String(values.name || '').trim() || createVariableName();
+    this.value = String(values.value || '').trim() === '' ? 'null' : String(values.value);
     return true;
   }
 

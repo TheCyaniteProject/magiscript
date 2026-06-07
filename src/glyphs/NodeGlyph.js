@@ -12,6 +12,10 @@ class NodeGlyph extends Glyph {
     this.layout = null;
     this.isRoot = Boolean(isRoot);
   }
+
+  getParamIOPorts() {
+    return [{ defaultAngle: -Math.PI / 2 }];
+  }
 }
 
 globalThis.NodeGlyph = NodeGlyph;

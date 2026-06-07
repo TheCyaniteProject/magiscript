@@ -8,6 +8,10 @@ class AddGlyph extends Glyph {
     return { title: 'Add', description: `Operand: ${this.operand}` };
   }
 
+  getParamIOPorts() {
+    return [{ defaultAngle: -Math.PI / 2 }];
+  }
+
   execute({
     node,
     currentValue,
