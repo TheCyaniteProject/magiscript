@@ -134,6 +134,9 @@ let isProgramRunning = false;
 let stepExecutionState = null;
 const geometryService = globalThis.GlyphGeometryService;
 const runtimeMathService = globalThis.RuntimeMathService;
+const runtimeContextService = globalThis.RuntimeContextService;
+const graphQueryService = globalThis.GraphQueryService;
+const programPersistenceService = globalThis.ProgramPersistenceService;
 
 function createGuid() {
   if (globalThis.crypto?.randomUUID) {
@@ -490,8 +493,8 @@ function createGlyph(type, parentNodeGuid) {
     case 'setvalue':
       glyph = new SetValueGlyph({ guid, parentNodeGuid });
       break;
-    case 'output':
-      glyph = new OutputGlyph({ guid, parentNodeGuid });
+    case 'print':
+      glyph = new PrintGlyph({ guid, parentNodeGuid });
       break;
     case 'boolean':
       glyph = new BooleanGlyph({ guid, parentNodeGuid, operation: 'equal', checked: false });
@@ -1157,7 +1160,7 @@ function drawMathGlyph(glyph, renderMode = RENDER_MODE_FULL) {
   context.restore();
 }
 
-function drawOutputGlyph(glyph, renderMode = RENDER_MODE_FULL) {
+function drawPrintGlyph(glyph, renderMode = RENDER_MODE_FULL) {
   const isDraggedGlyph = dragState.active && dragState.glyph?.guid === glyph.guid;
   const strokeWidth = getGlyphStrokeWidth(glyph.lineWidth, renderMode);
 
@@ -1272,8 +1275,8 @@ function drawGlyph(glyph, ancestorLineToolActive = true, renderMode = RENDER_MOD
     case 'reference':
       drawReferenceGlyph(glyph, renderMode);
       break;
-    case 'output':
-      drawOutputGlyph(glyph, renderMode);
+    case 'print':
+      drawPrintGlyph(glyph, renderMode);
       break;
     case 'boolean':
       drawBooleanGlyph(glyph, renderMode);
@@ -1724,8 +1727,8 @@ function drawGhostGlyph() {
       case 'setvalue':
         drawMathGlyph(ghostGlyph);
         break;
-      case 'output':
-        drawOutputGlyph(ghostGlyph);
+      case 'print':
+        drawPrintGlyph(ghostGlyph);
         break;
       case 'boolean':
         drawBooleanGlyph(ghostGlyph);
@@ -2045,7 +2048,7 @@ function isPointInsideGlyph(glyph, worldX, worldY) {
     return Math.hypot(worldX - glyph.x, worldY - glyph.y) <= glyph.radius;
   }
 
-  if (glyph.type === 'output') {
+  if (glyph.type === 'print') {
     return isPointInsideOctagonGlyph(glyph, worldX, worldY);
   }
 
@@ -2588,66 +2591,15 @@ function closeVariableModal(commit) {
 }
 
 function getAllVariableGlyphs(nodes = topLevelNodes, results = []) {
-  nodes.forEach((node) => {
-    node.outerGlyphs.forEach((glyph) => {
-      if (glyph.type === 'variable') {
-        results.push(glyph);
-      }
-    });
-
-    node.glyphs.forEach((glyph) => {
-      if (glyph.type === 'variable') {
-        results.push(glyph);
-      }
-
-      if (isNode(glyph)) {
-        getAllVariableGlyphs([glyph], results);
-      }
-    });
-  });
-
-  return results;
+  return graphQueryService.collectVariableGlyphs(nodes, isNode, results);
 }
 
 function getAllLabelGlyphs(nodes = topLevelNodes, results = []) {
-  nodes.forEach((node) => {
-    if (node.startGlyph) {
-      results.push(node.startGlyph);
-    }
-    node.glyphs.forEach((glyph) => {
-      if (glyph.type === 'label') {
-        results.push(glyph);
-      }
-
-      if (isNode(glyph)) {
-        getAllLabelGlyphs([glyph], results);
-      }
-    });
-  });
-
-  return results;
+  return graphQueryService.collectLabelGlyphs(nodes, isNode, results);
 }
 
 function getAllReferenceableGlyphs(nodes = topLevelNodes, results = []) {
-  nodes.forEach((node) => {
-    node.outerGlyphs.forEach((glyph) => {
-      if (glyph.type === 'variable' || glyph.type === 'boolean') {
-        results.push(glyph);
-      }
-    });
-
-    node.glyphs.forEach((glyph) => {
-      if (glyph.type === 'variable' || (glyph.type === 'boolean' && !isOwnedBooleanGlyph(glyph))) {
-        results.push(glyph);
-      }
-
-      if (isNode(glyph)) {
-        getAllReferenceableGlyphs([glyph], results);
-      }
-    });
-  });
-
-  return results;
+  return graphQueryService.collectReferenceableGlyphs(nodes, isNode, isOwnedBooleanGlyph, results);
 }
 
 function openReferenceModal(glyph) {
@@ -2782,42 +2734,11 @@ function evaluateIfElseCondition(node, glyph, currentValue, directInput, paramIn
 }
 
 function findNodeByGuid(targetGuid, nodes = topLevelNodes) {
-  for (const node of nodes) {
-    if (node.guid === targetGuid) {
-      return node;
-    }
-
-    const nestedNodes = node.glyphs.filter(isNode);
-    const nestedMatch = findNodeByGuid(targetGuid, nestedNodes);
-    if (nestedMatch) {
-      return nestedMatch;
-    }
-  }
-
-  return null;
+  return graphQueryService.findNodeByGuid(targetGuid, nodes, isNode);
 }
 
 function findGlyphByGuid(targetGuid, nodes = topLevelNodes) {
-  for (const node of nodes) {
-    if (node.startGlyph.guid === targetGuid) {
-      return node.startGlyph;
-    }
-
-    for (const glyph of [...node.outerGlyphs, ...node.glyphs]) {
-      if (glyph.guid === targetGuid) {
-        return glyph;
-      }
-
-      if (isNode(glyph)) {
-        const nestedGlyph = findGlyphByGuid(targetGuid, [glyph]);
-        if (nestedGlyph) {
-          return nestedGlyph;
-        }
-      }
-    }
-  }
-
-  return null;
+  return graphQueryService.findGlyphByGuid(targetGuid, nodes, isNode);
 }
 
 function getParentNode(node) {
@@ -2901,48 +2822,19 @@ function findIncomingOuterConnection(node, targetGuid) {
 let __runtimeContext = null;
 
 function resetBooleanRuntimeState() {
-  const referenceable = getAllReferenceableGlyphs();
-  referenceable.forEach((glyph) => {
-    if (glyph.type === 'boolean') {
-      glyph.lastResult = 0;
-    }
-  });
+  runtimeContextService.resetBooleanRuntimeState(getAllReferenceableGlyphs());
 }
 
 function createRuntimeContext() {
-  const vars = new Map();
-  getAllVariableGlyphs().forEach((v) => {
-    vars.set(v.guid, v.value);
-  });
-  return { vars };
+  return runtimeContextService.createRuntimeContext(getAllVariableGlyphs());
 }
 
 function getRuntimeVar(glyph) {
-  if (!__runtimeContext?.vars) {
-    return glyph.value;
-  }
-  return __runtimeContext.vars.has(glyph.guid) ? __runtimeContext.vars.get(glyph.guid) : glyph.value;
+  return runtimeContextService.getRuntimeVar(__runtimeContext, glyph);
 }
 
 function getRollingValueGlyph() {
-  const entryNode = getEntryNode();
-  if (!entryNode) {
-    return null;
-  }
-
-  const startInputSource = findIncomingOuterConnection(entryNode, entryNode.startGlyph.guid);
-  if (startInputSource?.type === 'variable') {
-    return startInputSource;
-  }
-
-  if (startInputSource?.type === 'reference') {
-    const target = getReferenceTarget(startInputSource);
-    if (target?.type === 'variable') {
-      return target;
-    }
-  }
-
-  return entryNode.outerGlyphs.find((glyph) => glyph.type === 'variable' && String(glyph.name || '').toUpperCase() === 'IN') || null;
+  return runtimeContextService.getRollingValueGlyph(getEntryNode(), findIncomingOuterConnection, getReferenceTarget);
 }
 
 function setRollingRuntimeValue(nextValue) {
@@ -2955,65 +2847,40 @@ function setRollingRuntimeValue(nextValue) {
 }
 
 function getRollingRuntimeValue(fallbackValue = null) {
-  const rollingGlyph = getRollingValueGlyph();
-  if (!rollingGlyph) {
-    return fallbackValue;
-  }
-
-  return getRuntimeVar(rollingGlyph);
+  return runtimeContextService.getRollingRuntimeValue(
+    __runtimeContext,
+    fallbackValue,
+    getRollingValueGlyph,
+    (_, glyph) => getRuntimeVar(glyph),
+  );
 }
 
 function setRuntimeVar(glyph, nextValue) {
-  if (!__runtimeContext) {
-    __runtimeContext = createRuntimeContext();
-  }
-  const normalized = nextValue === null || nextValue === undefined ? 'null' : String(nextValue);
-  __runtimeContext.vars.set(glyph.guid, normalized);
+  __runtimeContext = runtimeContextService.setRuntimeVar(
+    __runtimeContext,
+    glyph,
+    nextValue,
+    createRuntimeContext,
+  );
 }
 
 function evaluateOuterGlyphValue(glyph, directInput, paramInput, runtimeCtx = __runtimeContext) {
-  if (!glyph) {
-    return directInput;
-  }
-
-  if (glyph.type === 'value') {
-    return getRollingRuntimeValue(directInput);
-  }
-
-  if (glyph.type === 'variable') {
-    return runtimeCtx?.vars?.has(glyph.guid) ? runtimeCtx.vars.get(glyph.guid) : glyph.value;
-  }
-
-  if (glyph.type === 'reference') {
-    const target = getReferenceTarget(glyph);
-    if (target?.type === 'boolean') {
-      return target.ring === 'outer'
-        ? (target.checked ? 1 : 0)
-        : (target.lastResult ?? 0);
-    }
-
-    if (!target) {
-      return directInput;
-    }
-    return target.type === 'variable'
-      ? (runtimeCtx?.vars?.has(target.guid) ? runtimeCtx.vars.get(target.guid) : target.value)
-      : directInput;
-  }
-
-  if (glyph.type === 'boolean') {
-    return glyph.checked ? 1 : 0;
-  }
-
-  return directInput;
+  return runtimeContextService.evaluateOuterGlyphValue(glyph, directInput, runtimeCtx, {
+    getRollingRuntimeValue: (ctx, fallbackValue) => runtimeContextService.getRollingRuntimeValue(
+      ctx,
+      fallbackValue,
+      getRollingValueGlyph,
+      (resolvedContext, rollingGlyph) => runtimeContextService.getRuntimeVar(resolvedContext, rollingGlyph),
+    ),
+    getReferenceTarget,
+  });
 }
 
 function resolveParamInputForChild(parentNode, childNodeGuid, directInput, paramInput) {
-  const paramSource = findIncomingOuterConnection(parentNode, childNodeGuid);
-  if (!paramSource) {
-    return null;
-  }
-
-  return evaluateOuterGlyphValue(paramSource, directInput, paramInput, __runtimeContext);
+  return runtimeContextService.resolveParamInputForChild(parentNode, childNodeGuid, directInput, __runtimeContext, {
+    findIncomingOuterConnection,
+    evaluateOuterGlyphValue,
+  });
 }
 
 function executeNodeFrom(node, startGuid, currentValue, directInput, paramInput = null) {
@@ -3410,99 +3277,14 @@ function getEntryNode() {
   return [...topLevelNodes].sort((left, right) => getNodeStartY(left) - getNodeStartY(right))[0];
 }
 
-function serializeNode(node, nodes, glyphs) {
-  updateNodeOrdering(node);
-  nodes[node.guid] = {
-    guid: node.guid,
-    type: 'node',
-    parentNodeGuid: node.parentNodeGuid,
-    nextGlyphGuid: node.nextGlyphGuid,
-    x: node.x,
-    y: node.y,
-    radius: node.radius,
-    isRoot: Boolean(node.isRoot),
-    glyphGuids: [node.startGlyph.guid, ...node.glyphs.map((glyph) => glyph.guid)],
-    outerGlyphGuids: node.outerGlyphs.map((glyph) => glyph.guid),
-  };
-
-  glyphs[node.startGlyph.guid] = {
-    guid: node.startGlyph.guid,
-    type: 'start',
-    parentNodeGuid: node.guid,
-    nextGlyphGuid: node.startGlyph.getOutputTarget(0),
-    ...(node.startGlyph.name !== undefined ? { name: node.startGlyph.name } : {}),
-  };
-
-  node.glyphs.forEach((glyph) => {
-    if (isNode(glyph)) {
-      serializeNode(glyph, nodes, glyphs);
-      return;
-    }
-
-    glyphs[glyph.guid] = {
-      guid: glyph.guid,
-      type: glyph.type,
-      parentNodeGuid: glyph.parentNodeGuid,
-      nextGlyphGuid: glyph.getOutputTarget(0),
-      ...(glyph.getOutputTarget(1) !== null ? { nextGlyphGuidFalse: glyph.getOutputTarget(1) } : {}),
-      ...(glyph.ring ? { ring: glyph.ring } : {}),
-      ...(glyph.name !== undefined ? { name: glyph.name } : {}),
-      ...(glyph.value !== undefined ? { value: glyph.value } : {}),
-      ...(glyph.inputIndex !== undefined ? { inputIndex: glyph.inputIndex } : {}),
-      ...(glyph.operand !== undefined ? { operand: glyph.operand } : {}),
-      ...(glyph.targetLabelGuid !== undefined ? { targetLabelGuid: glyph.targetLabelGuid } : {}),
-      ...(glyph.referenceGlyphGuid !== undefined ? { referenceGlyphGuid: glyph.referenceGlyphGuid } : {}),
-      ...(glyph.ownerIfGlyphGuid !== undefined ? { ownerIfGlyphGuid: glyph.ownerIfGlyphGuid } : {}),
-      ...(glyph.operation !== undefined ? { operation: glyph.operation } : {}),
-      ...(glyph.checked !== undefined ? { checked: glyph.checked } : {}),
-      ...(glyph.mode !== undefined ? { mode: glyph.mode } : {}),
-    };
-  });
-
-  node.outerGlyphs.forEach((glyph) => {
-    glyphs[glyph.guid] = {
-      guid: glyph.guid,
-      type: glyph.type,
-      parentNodeGuid: glyph.parentNodeGuid,
-      nextGlyphGuid: glyph.getOutputTarget(0),
-      ...(glyph.getOutputTarget(1) !== null ? { nextGlyphGuidFalse: glyph.getOutputTarget(1) } : {}),
-      ...(glyph.ring ? { ring: glyph.ring } : {}),
-      ...(glyph.name !== undefined ? { name: glyph.name } : {}),
-      ...(glyph.value !== undefined ? { value: glyph.value } : {}),
-      ...(glyph.inputIndex !== undefined ? { inputIndex: glyph.inputIndex } : {}),
-      ...(glyph.targetLabelGuid !== undefined ? { targetLabelGuid: glyph.targetLabelGuid } : {}),
-      ...(glyph.referenceGlyphGuid !== undefined ? { referenceGlyphGuid: glyph.referenceGlyphGuid } : {}),
-      ...(glyph.ownerIfGlyphGuid !== undefined ? { ownerIfGlyphGuid: glyph.ownerIfGlyphGuid } : {}),
-      ...(glyph.operation !== undefined ? { operation: glyph.operation } : {}),
-      ...(glyph.checked !== undefined ? { checked: glyph.checked } : {}),
-      ...(glyph.mode !== undefined ? { mode: glyph.mode } : {}),
-    };
-  });
-}
-
 function serializeProgram() {
-  debugSpellcircle('serialize:start', {
-    topLevelNodeCount: topLevelNodes.length,
+  return programPersistenceService.serializeProgram({
+    topLevelNodes,
+    debugSpellcircle,
+    layoutAllNodes,
+    updateNodeOrdering,
+    isNode,
   });
-  layoutAllNodes();
-  const nodes = {};
-  const glyphs = {};
-  topLevelNodes.forEach((node) => serializeNode(node, nodes, glyphs));
-
-  const program = {
-    version: 1,
-    rootNodeGuids: topLevelNodes.map((node) => node.guid),
-    nodes,
-    glyphs,
-  };
-
-  debugSpellcircle('serialize:complete', {
-    rootCount: program.rootNodeGuids.length,
-    nodeCount: Object.keys(nodes).length,
-    glyphCount: Object.keys(glyphs).length,
-  });
-
-  return program;
 }
 
 function resetProgramState() {
@@ -3516,258 +3298,47 @@ function resetProgramState() {
   stepExecutionState = null;
 }
 
-function hydrateGlyphFromSerialized(serialized) {
-  let glyph = null;
-  const base = {
-    guid: serialized.guid,
-    parentNodeGuid: serialized.parentNodeGuid,
-  };
-
-  switch (serialized.type) {
-    case 'start':
-      glyph = new StartGlyph({ ...base, name: serialized.name ?? 'start' });
-      break;
-    case 'variable':
-      glyph = new VariableGlyph({
-        ...base,
-        name: serialized.name ?? createVariableName(),
-        value: serialized.value ?? 'null',
-      });
-      break;
-    case 'value':
-      glyph = new ValueGlyph({
-        ...base,
-        name: serialized.name ?? 'Value',
-        inputIndex: serialized.inputIndex ?? 1,
-      });
-      break;
-    case 'label':
-      glyph = new LabelGlyph({
-        ...base,
-        name: serialized.name ?? createLabelName(),
-      });
-      break;
-    case 'goto':
-      glyph = new GotoGlyph({
-        ...base,
-        targetLabelGuid: serialized.targetLabelGuid ?? null,
-      });
-      break;
-    case 'reference':
-      glyph = new ReferenceGlyph({
-        ...base,
-        referenceGlyphGuid: serialized.referenceGlyphGuid ?? null,
-      });
-      break;
-    case 'add':
-      glyph = new AddGlyph({
-        ...base,
-        operand: serialized.operand ?? '1',
-      });
-      break;
-    case 'subtract':
-      glyph = new SubtractGlyph({
-        ...base,
-        operand: serialized.operand ?? '1',
-      });
-      break;
-    case 'setvalue':
-      glyph = new SetValueGlyph({
-        ...base,
-      });
-      break;
-    case 'output':
-      glyph = new OutputGlyph(base);
-      break;
-    case 'boolean':
-      glyph = new BooleanGlyph({
-        ...base,
-        operation: serialized.operation ?? 'equal',
-        checked: serialized.checked ?? false,
-        ownerIfGlyphGuid: serialized.ownerIfGlyphGuid ?? null,
-      });
-      break;
-    case 'ifelse':
-      glyph = new IfElseGlyph({
-        ...base,
-        mode: serialized.mode ?? 'and',
-        nextGlyphGuidFalse: serialized.nextGlyphGuidFalse ?? null,
-      });
-      break;
-    default:
-      glyph = new Glyph({ guid: serialized.guid, type: serialized.type, parentNodeGuid: serialized.parentNodeGuid });
-      break;
-  }
-
-  glyph.setOutputTarget(serialized.nextGlyphGuid ?? null, 0);
-  glyph.setOutputTarget(serialized.nextGlyphGuidFalse ?? null, 1);
-  glyph.x = 0;
-  glyph.y = 0;
-  glyph.radius = CHILD_BASE_RADIUS;
-  glyph.lineWidth = BASE_NODE_LINE_WIDTH;
-  glyph.ring = serialized.ring || 'inner';
-
-  return glyph;
-}
-
 function deserializeProgram(program) {
-  debugSpellcircle('deserialize:start', {
-    hasProgram: Boolean(program),
-    rootCount: Array.isArray(program?.rootNodeGuids) ? program.rootNodeGuids.length : null,
+  const result = programPersistenceService.deserializeProgram(program, {
+    debugSpellcircle,
+    ROOT_NODE_RADIUS,
+    CHILD_BASE_RADIUS,
+    BASE_NODE_LINE_WIDTH,
+    getStrokeWidthForRadius,
+    createStartGlyph,
+    createNodeName,
+    createVariableName,
+    createLabelName,
+    resetProgramState,
+    topLevelNodes,
+    setFocusedNode: (node) => {
+      focusedNode = node;
+    },
+    layoutAllNodes,
+    drawScene,
+    Glyph,
+    StartGlyph,
+    NodeGlyph,
+    VariableGlyph,
+    ValueGlyph,
+    LabelGlyph,
+    GotoGlyph,
+    ReferenceGlyph,
+    AddGlyph,
+    SubtractGlyph,
+    SetValueGlyph,
+    PrintGlyph,
+    BooleanGlyph,
+    IfElseGlyph,
   });
 
-  if (!program || typeof program !== 'object') {
-    debugSpellcircle('deserialize:invalid-program');
-    return false;
+  if (result?.ok) {
+    variableCount = result.variableCount;
+    nodeCount = result.nodeCount;
+    return true;
   }
 
-  if (!Array.isArray(program.rootNodeGuids) || !program.nodes || !program.glyphs) {
-    debugSpellcircle('deserialize:invalid-shape', {
-      hasRoots: Array.isArray(program.rootNodeGuids),
-      hasNodes: Boolean(program.nodes),
-      hasGlyphs: Boolean(program.glyphs),
-    });
-    return false;
-  }
-
-  const nodeByGuid = new Map();
-  const nodes = program.nodes;
-  const glyphs = program.glyphs;
-
-  Object.values(nodes).forEach((serializedNode) => {
-    if (!serializedNode || serializedNode.type !== 'node' || !serializedNode.guid) {
-      return;
-    }
-
-    const radius = Number(serializedNode.radius) || ROOT_NODE_RADIUS;
-    const node = new NodeGlyph({
-      guid: serializedNode.guid,
-      parentNodeGuid: serializedNode.parentNodeGuid ?? null,
-      isRoot: Boolean(serializedNode.isRoot),
-    });
-    node.nextGlyphGuid = serializedNode.nextGlyphGuid ?? null;
-    node.x = Number(serializedNode.x) || 0;
-    node.y = Number(serializedNode.y) || 0;
-    node.radius = radius;
-    node.lineWidth = getStrokeWidthForRadius(radius);
-
-    nodeByGuid.set(node.guid, node);
-  });
-
-  debugSpellcircle('deserialize:nodes-hydrated', {
-    nodeCount: nodeByGuid.size,
-  });
-
-  const hydratedGlyphByGuid = new Map();
-  const getHydratedGlyph = (guid) => {
-    if (!guid) {
-      return null;
-    }
-
-    if (hydratedGlyphByGuid.has(guid)) {
-      return hydratedGlyphByGuid.get(guid);
-    }
-
-    const serialized = glyphs[guid];
-    if (!serialized) {
-      return null;
-    }
-
-    const hydrated = hydrateGlyphFromSerialized(serialized);
-    hydratedGlyphByGuid.set(guid, hydrated);
-    return hydrated;
-  };
-
-  // Attach start glyphs, inner glyphs, and outer glyphs.
-  Object.values(nodes).forEach((serializedNode) => {
-    const node = nodeByGuid.get(serializedNode.guid);
-    if (!node) {
-      return;
-    }
-
-    const glyphGuids = Array.isArray(serializedNode.glyphGuids) ? serializedNode.glyphGuids : [];
-    const outerGlyphGuids = Array.isArray(serializedNode.outerGlyphGuids) ? serializedNode.outerGlyphGuids : [];
-
-    const startGuid = glyphGuids[0];
-    const startGlyph = getHydratedGlyph(startGuid);
-    if (startGlyph && startGlyph.type === 'start') {
-      node.startGlyph = startGlyph;
-      node.startGlyph.parentNodeGuid = node.guid;
-    } else {
-      // Fallback: create a start glyph if missing.
-      node.startGlyph = createStartGlyph(node.guid);
-      node.startGlyph.name = createNodeName();
-      node.startGlyph.nextGlyphGuidIsAuto = false;
-    }
-
-    for (const guid of glyphGuids.slice(1)) {
-      const nestedNode = nodeByGuid.get(guid);
-      if (nestedNode) {
-        node.glyphs.push(nestedNode);
-        continue;
-      }
-
-      const glyph = getHydratedGlyph(guid);
-      if (glyph) {
-        node.glyphs.push(glyph);
-      }
-    }
-
-    for (const guid of outerGlyphGuids) {
-      const glyph = getHydratedGlyph(guid);
-      if (glyph) {
-        glyph.ring = 'outer';
-        node.outerGlyphs.push(glyph);
-      }
-    }
-  });
-
-  const roots = program.rootNodeGuids
-    .map((guid) => nodeByGuid.get(guid))
-    .filter(Boolean);
-
-  if (roots.length === 0) {
-    debugSpellcircle('deserialize:no-roots');
-    return false;
-  }
-
-  // Recompute variableCount so newly-created variables keep unique names.
-  variableCount = 0;
-  nodeCount = 0;
-  for (const glyph of hydratedGlyphByGuid.values()) {
-    if (glyph.type !== 'variable' || typeof glyph.name !== 'string') {
-      continue;
-    }
-
-    const match = glyph.name.match(/^variable_(\d+)$/);
-    if (match) {
-      variableCount = Math.max(variableCount, Number(match[1]) || 0);
-    }
-  }
-
-  // Recompute nodeCount so StartGlyph default names remain unique.
-  for (const glyph of hydratedGlyphByGuid.values()) {
-    if (glyph.type !== 'start' || typeof glyph.name !== 'string') {
-      continue;
-    }
-
-    const match = glyph.name.match(/^node_(\d+)$/);
-    if (match) {
-      nodeCount = Math.max(nodeCount, Number(match[1]) || 0);
-    }
-  }
-
-  resetProgramState();
-  roots.forEach((node) => topLevelNodes.push(node));
-  focusedNode = roots[0];
-
-  layoutAllNodes();
-  drawScene();
-  debugSpellcircle('deserialize:complete', {
-    rootCount: roots.length,
-    focusedNodeGuid: focusedNode?.guid ?? null,
-  });
-  return true;
+  return false;
 }
 
 function playProgram() {

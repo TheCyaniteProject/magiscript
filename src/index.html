@@ -165,10 +165,10 @@
             class="object-card"
             type="button"
             draggable="true"
-            data-object-type="output"
-            data-name="Output"
+            data-object-type="print"
+            data-name="Print"
             data-description="Prints the current runtime value to the console."
-            aria-label="Output glyph"
+            aria-label="Print glyph"
           >
             <span class="object-card__preview" aria-hidden="true">
               <span class="tray-label">PRINT</span>
@@ -340,11 +340,14 @@
     <script src="./glyphs/AddGlyph.js"></script>
     <script src="./glyphs/SubtractGlyph.js"></script>
     <script src="./glyphs/SetValueGlyph.js"></script>
-    <script src="./glyphs/OutputGlyph.js"></script>
+    <script src="./glyphs/PrintGlyph.js"></script>
     <script src="./glyphs/IfElseGlyph.js"></script>
     <script src="./glyphs/BooleanGlyph.js"></script>
     <script src="./renderer/services/GlyphGeometryService.js"></script>
     <script src="./renderer/services/RuntimeMathService.js"></script>
+    <script src="./renderer/services/RuntimeContextService.js"></script>
+    <script src="./renderer/services/GraphQueryService.js"></script>
+    <script src="./renderer/services/ProgramPersistenceService.js"></script>
     <script src="./renderer.js"></script>
   </body>
 </html>

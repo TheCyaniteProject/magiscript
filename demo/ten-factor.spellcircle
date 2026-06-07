@@ -104,7 +104,7 @@
     },
     "60d0e6be-3088-43aa-801f-98286e7616b0": {
       "guid": "60d0e6be-3088-43aa-801f-98286e7616b0",
-      "type": "output",
+      "type": "print",
       "parentNodeGuid": "2c29f5b8-f4b2-47f5-905b-ec33588ed0b0",
       "nextGlyphGuid": "59cfba25-eb77-4832-8bad-04f831bea9a3",
       "ring": "inner"
@@ -274,7 +274,7 @@
     },
     "da26e245-fd36-48fa-b235-f001a1308442": {
       "guid": "da26e245-fd36-48fa-b235-f001a1308442",
-      "type": "output",
+      "type": "print",
       "parentNodeGuid": "eda8ade7-80bd-4985-949a-4562f044afe7",
       "nextGlyphGuid": "318b8c9b-0226-4604-b284-f7fa7f1a0392",
       "ring": "inner"

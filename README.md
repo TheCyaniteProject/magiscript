@@ -16,6 +16,8 @@ Glyphs can also be moved by dragging them. Dragging them outside of the ring wil
 ---
 
 #### Glyphs
+- Full reference: [Glyph Guide](./GUIDE.md)
+
 - **Node**
     This is the core of a spell, literally. Nodes act as functions and containers for all Glyphs, including other Nodes.
 - **Variable**
@@ -30,14 +32,14 @@ Glyphs can also be moved by dragging them. Dragging them outside of the ring wil
     Adds two values and returns the result. Default value of 1. You can set the parameter IO to change the increment.
 - **Subtract**
     Subtracts two values and returns the result. Default value of 1. You can set the parameter IO to change the decrement.
-
-#### Planned Glyphs
+- **Set Value**
+    Sets the rolling program var to the value of the parameter IO.
 - **If/Else**
     Will have multiple inputs, conditional flags, and two outputs. Will use the first output when all conditions are true, and the second when any conditions are false.
-- **For/Loop**
-    Will have a Primary and Param input, and two outputs. The primary will be the entrance, the Param will be a Boolean or the number of iterations, the first output will be the output while looping, and the second will be the break.
 - **Boolean**
     Simple 0/1 value glyph to act as a switch for some other glyphs. Can have a fixed value, a single condition, or be set.
+
+#### Planned Glyphs
 - **Input**
     Pauses execution and create a popup with a text entry.
 - **Prompt**
@@ -51,6 +53,38 @@ The goal is to be able to create CLI/GUI apps and simple games using MagiScript.
 
 There are many bugs, mostly visual, with MagiScript at the moment. These will be fixed as I have time and modivation.
 Feel free to create contribute!
+
+---
+
+#### CLI
+
+You can now execute a `.spellcircle` program from the terminal and pass an integer for the entry `IN` variable glyph:
+
+```bash
+node cli.js programName.spellcircle <value>
+```
+or
+```bash
+npm exec -- magi programName.spellcircle <value>
+```
+
+You can also install to your PATH and run globally:
+
+```bash
+magi programName.spellcircle <value>
+```
+
+Example:
+
+```bash
+magi demo/ten-factor.spellcircle 2
+```
+
+If `magi` is not available on your PATH yet, run this once from the project root:
+
+```bash
+npm link
+```
 
 ---
 

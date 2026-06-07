@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "A small Electron fantasy canvas prototype",
   "main": "main.js",
+  "bin": {
+    "magi": "./cli.js"
+  },
   "scripts": {
     "start": "electron .",
     "debug": "electron . -- --debug"
