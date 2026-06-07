@@ -35,7 +35,7 @@ Glyphs can also be moved by dragging them. Dragging them outside of the ring wil
 - **Set Value**
     Sets the rolling program var to the value of the parameter IO.
 - **If/Else**
-    Will have multiple inputs, conditional flags, and two outputs. Will use the first output when all conditions are true, and the second when any conditions are false.
+    Can take up to 3 Booleans (drag onto IF glyph and drop). Click label to switch between AND and OR. Outputs to Red output when true and Black output when false.
 - **Boolean**
     Simple 0/1 value glyph to act as a switch for some other glyphs. Can have a fixed value, a single condition, or be set.
 
