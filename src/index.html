@@ -97,6 +97,32 @@
             class="object-card"
             type="button"
             draggable="true"
+            data-object-type="label"
+            data-name="Label"
+            data-description="Marks a jump target. It passes the runtime value through unchanged."
+            aria-label="Label glyph"
+          >
+            <span class="object-card__preview" aria-hidden="true">
+              <span class="tray-label">LBL</span>
+            </span>
+          </button>
+          <button
+            class="object-card"
+            type="button"
+            draggable="true"
+            data-object-type="goto"
+            data-name="Goto"
+            data-description="Jumps execution to a selected Label glyph anywhere in the program."
+            aria-label="Goto glyph"
+          >
+            <span class="object-card__preview" aria-hidden="true">
+              <span class="tray-label">GOTO</span>
+            </span>
+          </button>
+          <button
+            class="object-card"
+            type="button"
+            draggable="true"
             data-object-type="add"
             data-name="Add"
             data-description="Adds its operand to the current runtime value."
@@ -218,6 +244,20 @@
       </div>
     </div>
 
+    <div class="modal-backdrop" id="labelModalBackdrop" aria-hidden="true">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="labelModalTitle">
+        <h2 id="labelModalTitle">Edit Label</h2>
+        <label class="modal-field">
+          <span>Name</span>
+          <input id="labelModalNameInput" class="modal-input" type="text" autocomplete="off" />
+        </label>
+        <div class="modal-actions">
+          <button id="labelModalCancel" type="button">Cancel</button>
+          <button id="labelModalAccept" type="button">Accept</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-backdrop" id="booleanModalBackdrop" aria-hidden="true">
       <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="booleanModalTitle">
         <h2 id="booleanModalTitle">Edit Boolean</h2>
@@ -279,6 +319,8 @@
     <script src="./glyphs/VariableGlyph.js"></script>
     <script src="./glyphs/ValueGlyph.js"></script>
     <script src="./glyphs/ReferenceGlyph.js"></script>
+    <script src="./glyphs/LabelGlyph.js"></script>
+    <script src="./glyphs/GotoGlyph.js"></script>
     <script src="./glyphs/AddGlyph.js"></script>
     <script src="./glyphs/SubtractGlyph.js"></script>
     <script src="./glyphs/OutputGlyph.js"></script>
