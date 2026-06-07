@@ -36,3 +36,14 @@ contextBridge.exposeInMainWorld('SpellcircleFile', {
     };
   },
 });
+
+// Bridge for forwarding renderer message-log lines to the main process console
+contextBridge.exposeInMainWorld('SpellcircleConsole', {
+  log: (message) => {
+    try {
+      ipcRenderer.send('spellcircle:console-log', String(message));
+    } catch (_) {
+      // noop: best-effort only
+    }
+  },
+});

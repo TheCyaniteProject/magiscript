@@ -395,6 +395,13 @@ function appendMessageLog(value) {
   }
 
   messageLogBody.scrollTop = messageLogBody.scrollHeight;
+
+  // Also mirror to terminal via main process if available
+  try {
+    window.SpellcircleConsole?.log?.(line.textContent);
+  } catch (_) {
+    // best-effort only
+  }
 }
 
 function debugSpellcircle(step, details = {}) {
@@ -528,6 +535,9 @@ function createGlyph(type, parentNodeGuid) {
       break;
     case 'subtract':
       glyph = new SubtractGlyph({ guid, parentNodeGuid, operand: '1' });
+      break;
+    case 'setvalue':
+      glyph = new SetValueGlyph({ guid, parentNodeGuid });
       break;
     case 'output':
       glyph = new OutputGlyph({ guid, parentNodeGuid });
@@ -1175,10 +1185,17 @@ function drawMathGlyph(glyph, renderMode = RENDER_MODE_FULL) {
     context.moveTo(glyph.x, topY - glyph.radius * 0.38);
     context.lineTo(glyph.x, topY + glyph.radius * 0.38);
     context.stroke();
-  } else {
+  } else if (glyph.type === 'subtract') {
     context.beginPath();
     context.moveTo(glyph.x - width / 2, topY);
     context.lineTo(glyph.x + width / 2, topY);
+    context.stroke();
+  } else if (glyph.type === 'setvalue') {
+    context.beginPath();
+    context.moveTo(glyph.x - width / 2, topY - glyph.radius * 0.12);
+    context.lineTo(glyph.x + width / 2, topY - glyph.radius * 0.12);
+    context.moveTo(glyph.x - width / 2, topY + glyph.radius * 0.12);
+    context.lineTo(glyph.x + width / 2, topY + glyph.radius * 0.12);
     context.stroke();
   }
 
@@ -1298,6 +1315,7 @@ function drawGlyph(glyph, ancestorLineToolActive = true, renderMode = RENDER_MOD
       break;
     case 'add':
     case 'subtract':
+    case 'setvalue':
       drawMathGlyph(glyph, renderMode);
       break;
     case 'reference':
@@ -1501,6 +1519,7 @@ function drawNodeConnections(node, nodeLineToolActive, renderMode = RENDER_MODE_
     const allowParam = glyph.type === 'node'
       || glyph.type === 'add'
       || glyph.type === 'subtract'
+      || glyph.type === 'setvalue'
       || glyph.type === 'boolean'
       || glyph.type === 'ifelse';
     const allowOutput = glyph.type !== 'goto';
@@ -1756,6 +1775,7 @@ function drawGhostGlyph() {
         break;
       case 'add':
       case 'subtract':
+      case 'setvalue':
         drawMathGlyph(ghostGlyph);
         break;
       case 'output':
@@ -2154,6 +2174,8 @@ function getGlyphTooltip(glyph) {
       return { title: 'Add', description: `Operand: ${glyph.operand}` };
     case 'subtract':
       return { title: 'Subtract', description: `Operand: ${glyph.operand}` };
+    case 'setvalue':
+      return { title: 'Set Value', description: 'Sets previous variable/reference to Param input.' };
     case 'reference': {
       const target = getReferenceTarget(glyph);
       return { title: 'Reference', description: target ? `Target: ${getReferenceableGlyphLabel(target)}` : 'Target: none' };
@@ -2860,7 +2882,7 @@ function evaluateBooleanOperation(operation, inputValue, paramValue) {
 function evaluateOwnedBooleanGlyph(node, glyph, currentValue, directInput, paramInput, ownerGlyph = null) {
   const paramOwnerGuid = ownerGlyph?.guid ?? glyph.guid;
   const paramSource = findIncomingOuterConnection(node, paramOwnerGuid);
-  const comparisonValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput) : 0;
+  const comparisonValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput, __runtimeContext) : 0;
   glyph.lastResult = evaluateBooleanOperation(glyph.operation, currentValue, comparisonValue) ? 1 : 0;
   return glyph.lastResult;
 }
@@ -2956,10 +2978,9 @@ function executeGlyph(node, glyph, currentValue, directInput, paramInput) {
   switch (glyph.type) {
     case 'variable':
       if (glyph.ring === 'outer') {
-        return glyph.value;
+        return getRuntimeVar(glyph);
       }
-
-      glyph.value = currentValue === null || currentValue === undefined ? 'null' : String(currentValue);
+      setRuntimeVar(glyph, currentValue);
       return currentValue;
     case 'value':
       return currentValue;
@@ -2979,29 +3000,55 @@ function executeGlyph(node, glyph, currentValue, directInput, paramInput) {
             ? (target.checked ? 1 : target.lastResult ?? 0)
             : (target.lastResult ?? 0);
         }
-
-        return target?.value ?? currentValue;
+        if (!target) {
+          return currentValue;
+        }
+        return target.type === 'variable' ? getRuntimeVar(target) : currentValue;
       }
 
       if (target?.type === 'boolean') {
         return currentValue;
       }
 
-      if (target) {
-        target.value = currentValue === null || currentValue === undefined ? 'null' : String(currentValue);
+      if (target && target.type === 'variable') {
+        setRuntimeVar(target, currentValue);
       }
 
       return currentValue;
     }
     case 'add': {
       const paramSource = findIncomingOuterConnection(node, glyph.guid);
-      const operandValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput) : 1;
+      const operandValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput, __runtimeContext) : 1;
       return coerceNumber(currentValue) + coerceNumber(operandValue);
     }
     case 'subtract': {
       const paramSource = findIncomingOuterConnection(node, glyph.guid);
-      const operandValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput) : 1;
+      const operandValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput, __runtimeContext) : 1;
       return coerceNumber(currentValue) - coerceNumber(operandValue);
+    }
+    case 'setvalue': {
+      const paramSource = findIncomingOuterConnection(node, glyph.guid);
+      const nextValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput, __runtimeContext) : currentValue;
+
+      // Find the incoming execution glyph (the one that connects to this glyph's input).
+      let prevExec = null;
+      if (node.startGlyph?.nextGlyphGuid === glyph.guid) {
+        prevExec = node.startGlyph;
+      } else {
+        prevExec = node.glyphs.find((g) => g.nextGlyphGuid === glyph.guid || (g.type === 'ifelse' && (g.nextGlyphGuid === glyph.guid || g.nextGlyphGuidFalse === glyph.guid))) || null;
+      }
+
+      // If the previous exec glyph is a Variable, set it; if it's a Reference, set its target variable.
+      if (prevExec?.type === 'variable') {
+        setRuntimeVar(prevExec, nextValue);
+      } else if (prevExec?.type === 'reference') {
+        const target = getReferenceTarget(prevExec);
+        if (target && target.type === 'variable') {
+          setRuntimeVar(target, nextValue);
+        }
+      }
+
+      return nextValue;
     }
     case 'boolean': {
       return evaluateOwnedBooleanGlyph(node, glyph, currentValue, directInput, paramInput);
@@ -3029,7 +3076,33 @@ function findIncomingOuterConnection(node, targetGuid) {
   return node.outerGlyphs.find((glyph) => glyph.nextGlyphGuid === targetGuid) || null;
 }
 
-function evaluateOuterGlyphValue(glyph, directInput, paramInput) {
+// Runtime context to avoid mutating glyph values during execution
+let __runtimeContext = null;
+
+function createRuntimeContext() {
+  const vars = new Map();
+  getAllVariableGlyphs().forEach((v) => {
+    vars.set(v.guid, v.value);
+  });
+  return { vars };
+}
+
+function getRuntimeVar(glyph) {
+  if (!__runtimeContext?.vars) {
+    return glyph.value;
+  }
+  return __runtimeContext.vars.has(glyph.guid) ? __runtimeContext.vars.get(glyph.guid) : glyph.value;
+}
+
+function setRuntimeVar(glyph, nextValue) {
+  if (!__runtimeContext) {
+    __runtimeContext = createRuntimeContext();
+  }
+  const normalized = nextValue === null || nextValue === undefined ? 'null' : String(nextValue);
+  __runtimeContext.vars.set(glyph.guid, normalized);
+}
+
+function evaluateOuterGlyphValue(glyph, directInput, paramInput, runtimeCtx = __runtimeContext) {
   if (!glyph) {
     return directInput;
   }
@@ -3040,7 +3113,7 @@ function evaluateOuterGlyphValue(glyph, directInput, paramInput) {
   }
 
   if (glyph.type === 'variable') {
-    return glyph.value;
+    return runtimeCtx?.vars?.has(glyph.guid) ? runtimeCtx.vars.get(glyph.guid) : glyph.value;
   }
 
   if (glyph.type === 'reference') {
@@ -3051,7 +3124,12 @@ function evaluateOuterGlyphValue(glyph, directInput, paramInput) {
         : (target.lastResult ?? 0);
     }
 
-    return target?.value ?? directInput;
+    if (!target) {
+      return directInput;
+    }
+    return target.type === 'variable'
+      ? (runtimeCtx?.vars?.has(target.guid) ? runtimeCtx.vars.get(target.guid) : target.value)
+      : directInput;
   }
 
   if (glyph.type === 'boolean') {
@@ -3067,7 +3145,7 @@ function resolveParamInputForChild(parentNode, childNodeGuid, directInput, param
     return null;
   }
 
-  return evaluateOuterGlyphValue(paramSource, directInput, paramInput);
+  return evaluateOuterGlyphValue(paramSource, directInput, paramInput, __runtimeContext);
 }
 
 function executeNodeFrom(node, startGuid, currentValue, directInput, paramInput = null) {
@@ -3112,7 +3190,7 @@ function executeNode(node, incomingValue, paramValue = null) {
   const paramInput = paramValue;
   const startInputSource = findIncomingOuterConnection(node, node.startGlyph.guid);
   let currentValue = startInputSource
-    ? evaluateOuterGlyphValue(startInputSource, directInput, paramInput)
+    ? evaluateOuterGlyphValue(startInputSource, directInput, paramInput, __runtimeContext)
     : directInput;
 
   return executeNodeFrom(node, node.startGlyph.nextGlyphGuid, currentValue, directInput, paramInput);
@@ -3301,6 +3379,11 @@ function hydrateGlyphFromSerialized(serialized) {
       glyph = new SubtractGlyph({
         ...base,
         operand: serialized.operand ?? '1',
+      });
+      break;
+    case 'setvalue':
+      glyph = new SetValueGlyph({
+        ...base,
       });
       break;
     case 'output':
@@ -3508,6 +3591,8 @@ function playProgram() {
 
   layoutAllNodes();
   updateNodeOrdering(entryNode);
+  // Build fresh runtime context for this execution run
+  __runtimeContext = createRuntimeContext();
   let result = executeNode(entryNode, null);
 
   while (isExecutionJump(result)) {

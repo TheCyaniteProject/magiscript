@@ -8,7 +8,6 @@ class NodeGlyph extends Glyph {
     this.lineWidth = 0;
     this.glyphs = [];
     this.outerGlyphs = [];
-    // Node-level entry connection replaces the old Start glyph
     this.entryNextGuid = null;
     this.layout = null;
     this.isRoot = Boolean(isRoot);

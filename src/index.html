@@ -149,6 +149,19 @@
             class="object-card"
             type="button"
             draggable="true"
+            data-object-type="setvalue"
+            data-name="Set Value"
+            data-description="Sets the previous Variable/Reference to the Param value."
+            aria-label="Set Value glyph"
+          >
+            <span class="object-card__preview" aria-hidden="true">
+              <span class="tray-label">=</span>
+            </span>
+          </button>
+          <button
+            class="object-card"
+            type="button"
+            draggable="true"
             data-object-type="output"
             data-name="Output"
             data-description="Prints the current runtime value to the console."
@@ -323,6 +336,7 @@
     <script src="./glyphs/GotoGlyph.js"></script>
     <script src="./glyphs/AddGlyph.js"></script>
     <script src="./glyphs/SubtractGlyph.js"></script>
+    <script src="./glyphs/SetValueGlyph.js"></script>
     <script src="./glyphs/OutputGlyph.js"></script>
     <script src="./glyphs/IfElseGlyph.js"></script>
     <script src="./glyphs/BooleanGlyph.js"></script>

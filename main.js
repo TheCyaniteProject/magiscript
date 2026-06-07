@@ -137,6 +137,15 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
 }
 
+// Mirror renderer message log lines to the main process stdout
+ipcMain.on('spellcircle:console-log', (_event, message) => {
+  try {
+    console.log(String(message));
+  } catch (_) {
+    console.log('[Log forwarding failed]');
+  }
+});
+
 app.whenReady().then(() => {
   createWindow();
 
