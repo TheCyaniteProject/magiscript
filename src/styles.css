@@ -206,10 +206,10 @@ button {
   box-shadow: inset 0 0 0 1px rgba(23, 18, 11, 0.28), 0 4px 10px rgba(0, 0, 0, 0.12);
 }
 
-.play-button {
+.play-button,
+.step-button {
   position: fixed;
   top: 12px;
-  left: 50%;
   z-index: 3;
   min-width: 92px;
   height: 32px;
@@ -218,11 +218,21 @@ button {
   background: rgba(246, 234, 200, 0.94);
   color: var(--ink);
   cursor: pointer;
-  transform: translateX(-50%);
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
 }
 
-.play-button:hover {
+.play-button {
+  left: calc(50% - 52px);
+  transform: translateX(-100%);
+}
+
+.step-button {
+  left: calc(50% + 52px);
+  transform: translateX(0);
+}
+
+.play-button:hover,
+.step-button:hover {
   background: rgba(255, 247, 220, 1);
 }
 

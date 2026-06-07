@@ -3,6 +3,7 @@ const trayToggle = document.getElementById('trayToggle');
 const recenterCanvasButton = document.getElementById('recenterCanvas');
 const focusParentNodeButton = document.getElementById('focusParentNode');
 const playProgramButton = document.getElementById('playProgram');
+const stepProgramButton = document.getElementById('stepProgram');
 const saveProgramButton = document.getElementById('saveProgram');
 const loadProgramButton = document.getElementById('loadProgram');
 const lineToolToggle = document.getElementById('lineToolToggle');
@@ -129,6 +130,8 @@ const RENDER_MODE_CHILD_CONTEXT_NODE_ONLY = 'child-context-node-only';
 
 let hiddenContextNodeGuid = null;
 const PARENT_CONTEXT_LINE_WIDTH_MULTIPLIER = 1.5;
+let isProgramRunning = false;
+let stepExecutionState = null;
 
 function createGuid() {
   if (globalThis.crypto?.randomUUID) {
@@ -3196,6 +3199,255 @@ function executeNode(node, incomingValue, paramValue = null) {
   return executeNodeFrom(node, node.startGlyph.nextGlyphGuid, currentValue, directInput, paramInput);
 }
 
+function getStepParamName(node, glyph) {
+  const paramSource = findIncomingOuterConnection(node, glyph.guid);
+  if (!paramSource) {
+    return '';
+  }
+
+  if (paramSource.type === 'variable') {
+    return paramSource.name || '';
+  }
+
+  if (paramSource.type === 'reference') {
+    const target = getReferenceTarget(paramSource);
+    return target?.type === 'variable' ? (target.name || '') : '';
+  }
+
+  return paramSource.name || paramSource.type;
+}
+
+function getStepGlyphName(node, glyph) {
+  if (!glyph) {
+    return '';
+  }
+
+  if (isNode(glyph)) {
+    return glyph.startGlyph?.name || 'node';
+  }
+
+  if (glyph.type === 'goto') {
+    const target = getGotoTarget(glyph);
+    return getJumpTargetLabel(target);
+  }
+
+  if (glyph.type === 'reference') {
+    const target = getReferenceTarget(glyph);
+    return target?.type === 'variable' ? (target.name || '') : '';
+  }
+
+  if (glyph.type === 'add' || glyph.type === 'setvalue' || glyph.type === 'ifelse') {
+    return getStepParamName(node, glyph);
+  }
+
+  return glyph.name || glyph.type;
+}
+
+function logStepGlyph(node, glyph, inValue) {
+  const glyphName = getStepGlyphName(node, glyph);
+  const message = `STEP: ${inValue} | guid=${glyph.guid} | type=${glyph.type} | name=${glyphName}`;
+
+  try {
+    window.SpellcircleConsole?.log?.(message);
+  } catch (_) {
+    // best-effort only
+  }
+}
+
+function createStepFrameFromNodeStart(node, incomingValue, paramValue = null) {
+  const directInput = incomingValue;
+  const paramInput = paramValue;
+  const startInputSource = findIncomingOuterConnection(node, node.startGlyph.guid);
+  const currentValue = startInputSource
+    ? evaluateOuterGlyphValue(startInputSource, directInput, paramInput, __runtimeContext)
+    : directInput;
+
+  return {
+    nodeGuid: node.guid,
+    currentGuid: node.startGlyph.nextGlyphGuid,
+    currentValue,
+    directInput,
+    paramInput,
+    waitingForChild: false,
+    nextAfterChild: null,
+  };
+}
+
+function createStepFrameFromGuid(node, startGuid, incomingValue, directInput = incomingValue, paramInput = null) {
+  return {
+    nodeGuid: node.guid,
+    currentGuid: startGuid,
+    currentValue: incomingValue,
+    directInput,
+    paramInput,
+    waitingForChild: false,
+    nextAfterChild: null,
+  };
+}
+
+function collapseCompletedStepFrames() {
+  if (!stepExecutionState) {
+    return;
+  }
+
+  while (stepExecutionState.stack.length > 0) {
+    const frame = stepExecutionState.stack[stepExecutionState.stack.length - 1];
+    if (frame.currentGuid) {
+      return;
+    }
+
+    const finishedValue = frame.currentValue;
+    stepExecutionState.stack.pop();
+
+    if (stepExecutionState.stack.length === 0) {
+      stepExecutionState.completed = true;
+      stepExecutionState.result = finishedValue;
+      return;
+    }
+
+    const parentFrame = stepExecutionState.stack[stepExecutionState.stack.length - 1];
+    if (parentFrame.waitingForChild) {
+      parentFrame.currentValue = finishedValue;
+      parentFrame.currentGuid = parentFrame.nextAfterChild;
+      parentFrame.waitingForChild = false;
+      parentFrame.nextAfterChild = null;
+    }
+  }
+}
+
+function setStepStateToJumpTarget(jumpResult) {
+  const targetLabel = findGlyphByGuid(jumpResult.targetLabelGuid);
+  if (!targetLabel) {
+    appendMessageLog(`Goto target missing: ${jumpResult.targetLabelGuid}`);
+    stepExecutionState.stack = [];
+    stepExecutionState.completed = true;
+    stepExecutionState.result = jumpResult.value;
+    return;
+  }
+
+  if (targetLabel.type === 'label') {
+    const targetNode = targetLabel.parentNodeGuid ? findNodeByGuid(targetLabel.parentNodeGuid) : null;
+    if (!targetNode) {
+      appendMessageLog(`Goto label target has no node: ${jumpResult.targetLabelGuid}`);
+      stepExecutionState.stack = [];
+      stepExecutionState.completed = true;
+      stepExecutionState.result = jumpResult.value;
+      return;
+    }
+
+    stepExecutionState.stack = [createStepFrameFromGuid(targetNode, targetLabel.guid, jumpResult.value, jumpResult.value, null)];
+    stepExecutionState.completed = false;
+    stepExecutionState.result = null;
+    return;
+  }
+
+  if (targetLabel.type === 'start') {
+    const targetNode = targetLabel.parentNodeGuid ? findNodeByGuid(targetLabel.parentNodeGuid) : null;
+    if (!targetNode) {
+      appendMessageLog(`Goto start target has no node: ${jumpResult.targetLabelGuid}`);
+      stepExecutionState.stack = [];
+      stepExecutionState.completed = true;
+      stepExecutionState.result = jumpResult.value;
+      return;
+    }
+
+    stepExecutionState.stack = [createStepFrameFromGuid(targetNode, targetLabel.guid, jumpResult.value, jumpResult.value, null)];
+    stepExecutionState.completed = false;
+    stepExecutionState.result = null;
+    return;
+  }
+
+  appendMessageLog(`Unsupported goto target type: ${targetLabel.type}`);
+  stepExecutionState.stack = [];
+  stepExecutionState.completed = true;
+  stepExecutionState.result = jumpResult.value;
+}
+
+function initializeStepExecution() {
+  const entryNode = getEntryNode();
+  if (!entryNode) {
+    return false;
+  }
+
+  layoutAllNodes();
+  updateNodeOrdering(entryNode);
+  __runtimeContext = createRuntimeContext();
+
+  stepExecutionState = {
+    stack: [createStepFrameFromNodeStart(entryNode, null)],
+    completed: false,
+    result: null,
+  };
+
+  collapseCompletedStepFrames();
+  return true;
+}
+
+function runSingleProgramStep() {
+  if (!stepExecutionState || stepExecutionState.completed) {
+    const initialized = initializeStepExecution();
+    if (!initialized) {
+      return true;
+    }
+  }
+
+  collapseCompletedStepFrames();
+  if (stepExecutionState.completed) {
+    return true;
+  }
+
+  while (stepExecutionState.stack.length > 0) {
+    const frame = stepExecutionState.stack[stepExecutionState.stack.length - 1];
+    const node = findNodeByGuid(frame.nodeGuid);
+    if (!node) {
+      stepExecutionState.stack.pop();
+      collapseCompletedStepFrames();
+      return stepExecutionState.completed;
+    }
+
+    const lookup = buildNodeExecutionLookup(node);
+    const glyph = lookup.get(frame.currentGuid) ?? findNodeByGuid(frame.currentGuid, [node]);
+    if (!glyph) {
+      frame.currentGuid = null;
+      collapseCompletedStepFrames();
+      if (stepExecutionState.completed) {
+        return true;
+      }
+      continue;
+    }
+
+    if (isNode(glyph)) {
+      const childParamValue = resolveParamInputForChild(node, glyph.guid, frame.directInput, frame.paramInput);
+      frame.waitingForChild = true;
+      frame.nextAfterChild = glyph.nextGlyphGuid;
+      stepExecutionState.stack.push(createStepFrameFromNodeStart(glyph, frame.currentValue, childParamValue));
+      collapseCompletedStepFrames();
+      if (stepExecutionState.completed) {
+        return true;
+      }
+      continue;
+    }
+
+    logStepGlyph(node, glyph, frame.currentValue);
+    const glyphResult = executeGlyph(node, glyph, frame.currentValue, frame.directInput, frame.paramInput);
+    if (isExecutionJump(glyphResult)) {
+      setStepStateToJumpTarget(glyphResult);
+      return stepExecutionState.completed;
+    }
+
+    frame.currentValue = glyphResult;
+    frame.currentGuid = glyph.type === 'ifelse'
+      ? (glyph.lastResult === 1 ? glyph.nextGlyphGuid : glyph.nextGlyphGuidFalse)
+      : glyph.nextGlyphGuid;
+
+    collapseCompletedStepFrames();
+    return stepExecutionState.completed;
+  }
+
+  stepExecutionState.completed = true;
+  return true;
+}
+
 function executeFromLabel(labelGlyph, incomingValue) {
   const targetNode = labelGlyph?.parentNodeGuid ? findNodeByGuid(labelGlyph.parentNodeGuid) : null;
   if (!targetNode) {
@@ -3203,6 +3455,76 @@ function executeFromLabel(labelGlyph, incomingValue) {
   }
 
   return executeNodeFrom(targetNode, labelGlyph.guid, incomingValue, incomingValue, null);
+}
+
+function setProgramButtonsBusy(busy) {
+  if (playProgramButton) {
+    playProgramButton.disabled = busy;
+  }
+
+  if (stepProgramButton) {
+    stepProgramButton.disabled = busy;
+  }
+}
+
+function runProgram(stepMode = false) {
+  if (isProgramRunning) {
+    return;
+  }
+
+  isProgramRunning = true;
+  setProgramButtonsBusy(true);
+
+  try {
+    if (stepMode) {
+      const finished = runSingleProgramStep();
+      if (finished) {
+        console.log('MagiScript execution finished:', stepExecutionState?.result);
+      }
+      return;
+    }
+
+    stepExecutionState = null;
+    const entryNode = getEntryNode();
+    if (!entryNode) {
+      return;
+    }
+
+    layoutAllNodes();
+    updateNodeOrdering(entryNode);
+    __runtimeContext = createRuntimeContext();
+    let result = executeNode(entryNode, null);
+
+    while (isExecutionJump(result)) {
+      const targetLabel = findGlyphByGuid(result.targetLabelGuid);
+      if (!targetLabel) {
+        appendMessageLog(`Goto target missing: ${result.targetLabelGuid}`);
+        result = result.value;
+        break;
+      }
+
+      if (targetLabel.type === 'label') {
+        result = executeFromLabel(targetLabel, result.value);
+      } else if (targetLabel.type === 'start') {
+        const targetNode = targetLabel.parentNodeGuid ? findNodeByGuid(targetLabel.parentNodeGuid) : null;
+        if (!targetNode) {
+          appendMessageLog(`Goto start target has no node: ${result.targetLabelGuid}`);
+          result = result.value;
+          break;
+        }
+        result = executeNodeFrom(targetNode, targetLabel.guid, result.value, result.value, null);
+      } else {
+        appendMessageLog(`Unsupported goto target type: ${targetLabel.type}`);
+        result = result.value;
+        break;
+      }
+    }
+
+    console.log('MagiScript execution finished:', result);
+  } finally {
+    setProgramButtonsBusy(false);
+    isProgramRunning = false;
+  }
 }
 
 function getNodeStartY(node) {
@@ -3324,6 +3646,7 @@ function resetProgramState() {
   topLevelNodes.length = 0;
   focusedNode = null;
   pendingDelete = null;
+  stepExecutionState = null;
 }
 
 function hydrateGlyphFromSerialized(serialized) {
@@ -3584,43 +3907,11 @@ function deserializeProgram(program) {
 }
 
 function playProgram() {
-  const entryNode = getEntryNode();
-  if (!entryNode) {
-    return;
-  }
+  void runProgram(false);
+}
 
-  layoutAllNodes();
-  updateNodeOrdering(entryNode);
-  // Build fresh runtime context for this execution run
-  __runtimeContext = createRuntimeContext();
-  let result = executeNode(entryNode, null);
-
-  while (isExecutionJump(result)) {
-    const targetLabel = findGlyphByGuid(result.targetLabelGuid);
-    if (!targetLabel) {
-      appendMessageLog(`Goto target missing: ${result.targetLabelGuid}`);
-      result = result.value;
-      break;
-    }
-
-    if (targetLabel.type === 'label') {
-      result = executeFromLabel(targetLabel, result.value);
-    } else if (targetLabel.type === 'start') {
-      const targetNode = targetLabel.parentNodeGuid ? findNodeByGuid(targetLabel.parentNodeGuid) : null;
-      if (!targetNode) {
-        appendMessageLog(`Goto start target has no node: ${result.targetLabelGuid}`);
-        result = result.value;
-        break;
-      }
-      result = executeNodeFrom(targetNode, targetLabel.guid, result.value, result.value, null);
-    } else {
-      appendMessageLog(`Unsupported goto target type: ${targetLabel.type}`);
-      result = result.value;
-      break;
-    }
-  }
-
-  console.log('MagiScript execution finished:', result);
+function stepProgram() {
+  void runProgram(true);
 }
 
 function resizeCanvas() {
@@ -3746,6 +4037,10 @@ focusParentNodeButton?.addEventListener('click', () => {
 
 playProgramButton.addEventListener('click', () => {
   playProgram();
+});
+
+stepProgramButton?.addEventListener('click', () => {
+  stepProgram();
 });
 
 saveProgramButton?.addEventListener('click', async () => {
