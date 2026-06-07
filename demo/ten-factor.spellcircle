@@ -1,0 +1,344 @@
+{
+  "version": 1,
+  "rootNodeGuids": [
+    "2c29f5b8-f4b2-47f5-905b-ec33588ed0b0"
+  ],
+  "nodes": {
+    "2c29f5b8-f4b2-47f5-905b-ec33588ed0b0": {
+      "guid": "2c29f5b8-f4b2-47f5-905b-ec33588ed0b0",
+      "type": "node",
+      "parentNodeGuid": null,
+      "nextGlyphGuid": null,
+      "x": 1280,
+      "y": 685,
+      "radius": 192,
+      "isRoot": true,
+      "glyphGuids": [
+        "d931c6e9-c0b9-4877-bec5-2ec730c59d5c",
+        "60d0e6be-3088-43aa-801f-98286e7616b0",
+        "59cfba25-eb77-4832-8bad-04f831bea9a3",
+        "ac710a59-fe85-46be-bf95-e121735e8247",
+        "eda8ade7-80bd-4985-949a-4562f044afe7"
+      ],
+      "outerGlyphGuids": [
+        "54a65692-12cf-477a-8c29-6b420e15c2dd",
+        "99e00f41-58d6-43a3-a81e-e80645c34dae",
+        "5b24d4e8-412d-4918-b792-e0e3c77966cd",
+        "8a4b67c4-1041-4032-9916-b70a544fa4d1"
+      ]
+    },
+    "59cfba25-eb77-4832-8bad-04f831bea9a3": {
+      "guid": "59cfba25-eb77-4832-8bad-04f831bea9a3",
+      "type": "node",
+      "parentNodeGuid": "2c29f5b8-f4b2-47f5-905b-ec33588ed0b0",
+      "nextGlyphGuid": null,
+      "x": 1362.5250494218633,
+      "y": 798.5859860102427,
+      "radius": 33.6,
+      "isRoot": false,
+      "glyphGuids": [
+        "75f48f4e-7b1d-404c-a4ed-7f07876f57f9",
+        "251708ba-346a-45a8-8d18-9d96c169d059",
+        "f13b5ff1-d04d-442c-9c81-853d7fea2896",
+        "35deb0e2-8b09-4ff4-86ac-8555150bb09a",
+        "605ddee8-5a43-4782-ab7b-0fe6fa96e66c",
+        "dac92d63-da7b-4a89-bf32-042a00651fc0"
+      ],
+      "outerGlyphGuids": [
+        "930bd382-219c-4aa3-be6c-6a6be23c98c0",
+        "a3202141-901e-4cd2-ae5d-ec48ac8b190b",
+        "5c2332fb-af2a-45ef-ac7b-588d86cf080e"
+      ]
+    },
+    "ac710a59-fe85-46be-bf95-e121735e8247": {
+      "guid": "ac710a59-fe85-46be-bf95-e121735e8247",
+      "type": "node",
+      "parentNodeGuid": "2c29f5b8-f4b2-47f5-905b-ec33588ed0b0",
+      "nextGlyphGuid": null,
+      "x": 1197.4749505781367,
+      "y": 798.5859860102427,
+      "radius": 33.6,
+      "isRoot": false,
+      "glyphGuids": [
+        "d9fa7af4-307a-40b7-a8f4-cd507b446eff",
+        "ed7d63c8-b381-4bf0-8c44-d3e011832ea6",
+        "ad3ad031-5d73-4266-8af1-699f51bae338",
+        "f0dfc976-c1b9-4f92-b8db-67f590195915",
+        "ee9cafab-497f-469e-b540-8e1d94447578"
+      ],
+      "outerGlyphGuids": [
+        "ace94043-3705-41e6-96b6-c766bf847894",
+        "d438eb23-63c4-44fd-9d9b-09e29b6dda91",
+        "72ddd0ac-1537-4450-adec-acb215018919"
+      ]
+    },
+    "eda8ade7-80bd-4985-949a-4562f044afe7": {
+      "guid": "eda8ade7-80bd-4985-949a-4562f044afe7",
+      "type": "node",
+      "parentNodeGuid": "2c29f5b8-f4b2-47f5-905b-ec33588ed0b0",
+      "nextGlyphGuid": null,
+      "x": 1146.4716651121605,
+      "y": 641.6140139897574,
+      "radius": 33.6,
+      "isRoot": false,
+      "glyphGuids": [
+        "85093cc7-4538-4847-8205-222436d07fe2",
+        "cad539dd-23fb-4199-84ba-61f0cb90dac1",
+        "00572192-7efb-47d4-bf68-95cc18f90cb0",
+        "da26e245-fd36-48fa-b235-f001a1308442",
+        "318b8c9b-0226-4604-b284-f7fa7f1a0392"
+      ],
+      "outerGlyphGuids": [
+        "ae725460-69e7-47b6-9b48-1ed55fa462b0",
+        "dd73de3a-ae4d-4e1b-8435-4c5058279c34"
+      ]
+    }
+  },
+  "glyphs": {
+    "d931c6e9-c0b9-4877-bec5-2ec730c59d5c": {
+      "guid": "d931c6e9-c0b9-4877-bec5-2ec730c59d5c",
+      "type": "start",
+      "parentNodeGuid": "2c29f5b8-f4b2-47f5-905b-ec33588ed0b0",
+      "nextGlyphGuid": "60d0e6be-3088-43aa-801f-98286e7616b0",
+      "name": "main"
+    },
+    "60d0e6be-3088-43aa-801f-98286e7616b0": {
+      "guid": "60d0e6be-3088-43aa-801f-98286e7616b0",
+      "type": "output",
+      "parentNodeGuid": "2c29f5b8-f4b2-47f5-905b-ec33588ed0b0",
+      "nextGlyphGuid": "59cfba25-eb77-4832-8bad-04f831bea9a3",
+      "ring": "inner"
+    },
+    "75f48f4e-7b1d-404c-a4ed-7f07876f57f9": {
+      "guid": "75f48f4e-7b1d-404c-a4ed-7f07876f57f9",
+      "type": "start",
+      "parentNodeGuid": "59cfba25-eb77-4832-8bad-04f831bea9a3",
+      "nextGlyphGuid": "251708ba-346a-45a8-8d18-9d96c169d059",
+      "name": "check"
+    },
+    "251708ba-346a-45a8-8d18-9d96c169d059": {
+      "guid": "251708ba-346a-45a8-8d18-9d96c169d059",
+      "type": "setvalue",
+      "parentNodeGuid": "59cfba25-eb77-4832-8bad-04f831bea9a3",
+      "nextGlyphGuid": "f13b5ff1-d04d-442c-9c81-853d7fea2896",
+      "ring": "inner"
+    },
+    "f13b5ff1-d04d-442c-9c81-853d7fea2896": {
+      "guid": "f13b5ff1-d04d-442c-9c81-853d7fea2896",
+      "type": "ifelse",
+      "parentNodeGuid": "59cfba25-eb77-4832-8bad-04f831bea9a3",
+      "nextGlyphGuid": null,
+      "nextGlyphGuidFalse": "35deb0e2-8b09-4ff4-86ac-8555150bb09a",
+      "ring": "inner",
+      "mode": "or"
+    },
+    "35deb0e2-8b09-4ff4-86ac-8555150bb09a": {
+      "guid": "35deb0e2-8b09-4ff4-86ac-8555150bb09a",
+      "type": "goto",
+      "parentNodeGuid": "59cfba25-eb77-4832-8bad-04f831bea9a3",
+      "nextGlyphGuid": null,
+      "ring": "inner",
+      "targetLabelGuid": "d9fa7af4-307a-40b7-a8f4-cd507b446eff"
+    },
+    "605ddee8-5a43-4782-ab7b-0fe6fa96e66c": {
+      "guid": "605ddee8-5a43-4782-ab7b-0fe6fa96e66c",
+      "type": "boolean",
+      "parentNodeGuid": "59cfba25-eb77-4832-8bad-04f831bea9a3",
+      "nextGlyphGuid": null,
+      "ring": "inner",
+      "ownerIfGlyphGuid": "f13b5ff1-d04d-442c-9c81-853d7fea2896",
+      "operation": "equal",
+      "checked": false
+    },
+    "dac92d63-da7b-4a89-bf32-042a00651fc0": {
+      "guid": "dac92d63-da7b-4a89-bf32-042a00651fc0",
+      "type": "boolean",
+      "parentNodeGuid": "59cfba25-eb77-4832-8bad-04f831bea9a3",
+      "nextGlyphGuid": null,
+      "ring": "inner",
+      "ownerIfGlyphGuid": "f13b5ff1-d04d-442c-9c81-853d7fea2896",
+      "operation": "greater",
+      "checked": false
+    },
+    "930bd382-219c-4aa3-be6c-6a6be23c98c0": {
+      "guid": "930bd382-219c-4aa3-be6c-6a6be23c98c0",
+      "type": "reference",
+      "parentNodeGuid": "59cfba25-eb77-4832-8bad-04f831bea9a3",
+      "nextGlyphGuid": "251708ba-346a-45a8-8d18-9d96c169d059",
+      "ring": "outer",
+      "referenceGlyphGuid": "54a65692-12cf-477a-8c29-6b420e15c2dd"
+    },
+    "a3202141-901e-4cd2-ae5d-ec48ac8b190b": {
+      "guid": "a3202141-901e-4cd2-ae5d-ec48ac8b190b",
+      "type": "reference",
+      "parentNodeGuid": "59cfba25-eb77-4832-8bad-04f831bea9a3",
+      "nextGlyphGuid": "f13b5ff1-d04d-442c-9c81-853d7fea2896",
+      "ring": "outer",
+      "referenceGlyphGuid": "99e00f41-58d6-43a3-a81e-e80645c34dae"
+    },
+    "5c2332fb-af2a-45ef-ac7b-588d86cf080e": {
+      "guid": "5c2332fb-af2a-45ef-ac7b-588d86cf080e",
+      "type": "value",
+      "parentNodeGuid": "59cfba25-eb77-4832-8bad-04f831bea9a3",
+      "nextGlyphGuid": "75f48f4e-7b1d-404c-a4ed-7f07876f57f9",
+      "ring": "outer",
+      "name": "Value",
+      "inputIndex": 1
+    },
+    "d9fa7af4-307a-40b7-a8f4-cd507b446eff": {
+      "guid": "d9fa7af4-307a-40b7-a8f4-cd507b446eff",
+      "type": "start",
+      "parentNodeGuid": "ac710a59-fe85-46be-bf95-e121735e8247",
+      "nextGlyphGuid": "ed7d63c8-b381-4bf0-8c44-d3e011832ea6",
+      "name": "increment"
+    },
+    "ed7d63c8-b381-4bf0-8c44-d3e011832ea6": {
+      "guid": "ed7d63c8-b381-4bf0-8c44-d3e011832ea6",
+      "type": "add",
+      "parentNodeGuid": "ac710a59-fe85-46be-bf95-e121735e8247",
+      "nextGlyphGuid": "ad3ad031-5d73-4266-8af1-699f51bae338",
+      "ring": "inner",
+      "operand": "1"
+    },
+    "ad3ad031-5d73-4266-8af1-699f51bae338": {
+      "guid": "ad3ad031-5d73-4266-8af1-699f51bae338",
+      "type": "reference",
+      "parentNodeGuid": "ac710a59-fe85-46be-bf95-e121735e8247",
+      "nextGlyphGuid": "f0dfc976-c1b9-4f92-b8db-67f590195915",
+      "ring": "inner",
+      "referenceGlyphGuid": "54a65692-12cf-477a-8c29-6b420e15c2dd"
+    },
+    "f0dfc976-c1b9-4f92-b8db-67f590195915": {
+      "guid": "f0dfc976-c1b9-4f92-b8db-67f590195915",
+      "type": "setvalue",
+      "parentNodeGuid": "ac710a59-fe85-46be-bf95-e121735e8247",
+      "nextGlyphGuid": "ee9cafab-497f-469e-b540-8e1d94447578",
+      "ring": "inner"
+    },
+    "ee9cafab-497f-469e-b540-8e1d94447578": {
+      "guid": "ee9cafab-497f-469e-b540-8e1d94447578",
+      "type": "goto",
+      "parentNodeGuid": "ac710a59-fe85-46be-bf95-e121735e8247",
+      "nextGlyphGuid": null,
+      "ring": "inner",
+      "targetLabelGuid": "85093cc7-4538-4847-8205-222436d07fe2"
+    },
+    "ace94043-3705-41e6-96b6-c766bf847894": {
+      "guid": "ace94043-3705-41e6-96b6-c766bf847894",
+      "type": "variable",
+      "parentNodeGuid": "ac710a59-fe85-46be-bf95-e121735e8247",
+      "nextGlyphGuid": "ed7d63c8-b381-4bf0-8c44-d3e011832ea6",
+      "ring": "outer",
+      "name": "1",
+      "value": "1"
+    },
+    "d438eb23-63c4-44fd-9d9b-09e29b6dda91": {
+      "guid": "d438eb23-63c4-44fd-9d9b-09e29b6dda91",
+      "type": "reference",
+      "parentNodeGuid": "ac710a59-fe85-46be-bf95-e121735e8247",
+      "nextGlyphGuid": "f0dfc976-c1b9-4f92-b8db-67f590195915",
+      "ring": "outer",
+      "referenceGlyphGuid": "5b24d4e8-412d-4918-b792-e0e3c77966cd"
+    },
+    "72ddd0ac-1537-4450-adec-acb215018919": {
+      "guid": "72ddd0ac-1537-4450-adec-acb215018919",
+      "type": "value",
+      "parentNodeGuid": "ac710a59-fe85-46be-bf95-e121735e8247",
+      "nextGlyphGuid": "d9fa7af4-307a-40b7-a8f4-cd507b446eff",
+      "ring": "outer",
+      "name": "Value",
+      "inputIndex": 1
+    },
+    "85093cc7-4538-4847-8205-222436d07fe2": {
+      "guid": "85093cc7-4538-4847-8205-222436d07fe2",
+      "type": "start",
+      "parentNodeGuid": "eda8ade7-80bd-4985-949a-4562f044afe7",
+      "nextGlyphGuid": "cad539dd-23fb-4199-84ba-61f0cb90dac1",
+      "name": "factor"
+    },
+    "cad539dd-23fb-4199-84ba-61f0cb90dac1": {
+      "guid": "cad539dd-23fb-4199-84ba-61f0cb90dac1",
+      "type": "add",
+      "parentNodeGuid": "eda8ade7-80bd-4985-949a-4562f044afe7",
+      "nextGlyphGuid": "00572192-7efb-47d4-bf68-95cc18f90cb0",
+      "ring": "inner",
+      "operand": "1"
+    },
+    "00572192-7efb-47d4-bf68-95cc18f90cb0": {
+      "guid": "00572192-7efb-47d4-bf68-95cc18f90cb0",
+      "type": "reference",
+      "parentNodeGuid": "eda8ade7-80bd-4985-949a-4562f044afe7",
+      "nextGlyphGuid": "da26e245-fd36-48fa-b235-f001a1308442",
+      "ring": "inner",
+      "referenceGlyphGuid": "5b24d4e8-412d-4918-b792-e0e3c77966cd"
+    },
+    "da26e245-fd36-48fa-b235-f001a1308442": {
+      "guid": "da26e245-fd36-48fa-b235-f001a1308442",
+      "type": "output",
+      "parentNodeGuid": "eda8ade7-80bd-4985-949a-4562f044afe7",
+      "nextGlyphGuid": "318b8c9b-0226-4604-b284-f7fa7f1a0392",
+      "ring": "inner"
+    },
+    "318b8c9b-0226-4604-b284-f7fa7f1a0392": {
+      "guid": "318b8c9b-0226-4604-b284-f7fa7f1a0392",
+      "type": "goto",
+      "parentNodeGuid": "eda8ade7-80bd-4985-949a-4562f044afe7",
+      "nextGlyphGuid": null,
+      "ring": "inner",
+      "targetLabelGuid": "75f48f4e-7b1d-404c-a4ed-7f07876f57f9"
+    },
+    "ae725460-69e7-47b6-9b48-1ed55fa462b0": {
+      "guid": "ae725460-69e7-47b6-9b48-1ed55fa462b0",
+      "type": "reference",
+      "parentNodeGuid": "eda8ade7-80bd-4985-949a-4562f044afe7",
+      "nextGlyphGuid": "cad539dd-23fb-4199-84ba-61f0cb90dac1",
+      "ring": "outer",
+      "referenceGlyphGuid": "5b24d4e8-412d-4918-b792-e0e3c77966cd"
+    },
+    "dd73de3a-ae4d-4e1b-8435-4c5058279c34": {
+      "guid": "dd73de3a-ae4d-4e1b-8435-4c5058279c34",
+      "type": "value",
+      "parentNodeGuid": "eda8ade7-80bd-4985-949a-4562f044afe7",
+      "nextGlyphGuid": "85093cc7-4538-4847-8205-222436d07fe2",
+      "ring": "outer",
+      "name": "Value",
+      "inputIndex": 1
+    },
+    "54a65692-12cf-477a-8c29-6b420e15c2dd": {
+      "guid": "54a65692-12cf-477a-8c29-6b420e15c2dd",
+      "type": "variable",
+      "parentNodeGuid": "2c29f5b8-f4b2-47f5-905b-ec33588ed0b0",
+      "nextGlyphGuid": null,
+      "ring": "outer",
+      "name": "index",
+      "value": "0"
+    },
+    "99e00f41-58d6-43a3-a81e-e80645c34dae": {
+      "guid": "99e00f41-58d6-43a3-a81e-e80645c34dae",
+      "type": "variable",
+      "parentNodeGuid": "2c29f5b8-f4b2-47f5-905b-ec33588ed0b0",
+      "nextGlyphGuid": null,
+      "ring": "outer",
+      "name": "iterations",
+      "value": "10"
+    },
+    "5b24d4e8-412d-4918-b792-e0e3c77966cd": {
+      "guid": "5b24d4e8-412d-4918-b792-e0e3c77966cd",
+      "type": "variable",
+      "parentNodeGuid": "2c29f5b8-f4b2-47f5-905b-ec33588ed0b0",
+      "nextGlyphGuid": null,
+      "ring": "outer",
+      "name": "value",
+      "value": "1"
+    },
+    "8a4b67c4-1041-4032-9916-b70a544fa4d1": {
+      "guid": "8a4b67c4-1041-4032-9916-b70a544fa4d1",
+      "type": "variable",
+      "parentNodeGuid": "2c29f5b8-f4b2-47f5-905b-ec33588ed0b0",
+      "nextGlyphGuid": "d931c6e9-c0b9-4877-bec5-2ec730c59d5c",
+      "ring": "outer",
+      "name": "IN",
+      "value": "1"
+    }
+  }
+}

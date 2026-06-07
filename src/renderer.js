@@ -3022,39 +3022,26 @@ function executeGlyph(node, glyph, currentValue, directInput, paramInput) {
     case 'add': {
       const paramSource = findIncomingOuterConnection(node, glyph.guid);
       const operandValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput, __runtimeContext) : 1;
-      return coerceNumber(currentValue) + coerceNumber(operandValue);
+      const nextValue = coerceNumber(currentValue) + coerceNumber(operandValue);
+      setRollingRuntimeValue(nextValue);
+      return nextValue;
     }
     case 'subtract': {
       const paramSource = findIncomingOuterConnection(node, glyph.guid);
       const operandValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput, __runtimeContext) : 1;
-      return coerceNumber(currentValue) - coerceNumber(operandValue);
+      const nextValue = coerceNumber(currentValue) - coerceNumber(operandValue);
+      setRollingRuntimeValue(nextValue);
+      return nextValue;
     }
     case 'setvalue': {
       const paramSource = findIncomingOuterConnection(node, glyph.guid);
       const nextValue = paramSource ? evaluateOuterGlyphValue(paramSource, directInput, paramInput, __runtimeContext) : currentValue;
-
-      // Find the incoming execution glyph (the one that connects to this glyph's input).
-      let prevExec = null;
-      if (node.startGlyph?.nextGlyphGuid === glyph.guid) {
-        prevExec = node.startGlyph;
-      } else {
-        prevExec = node.glyphs.find((g) => g.nextGlyphGuid === glyph.guid || (g.type === 'ifelse' && (g.nextGlyphGuid === glyph.guid || g.nextGlyphGuidFalse === glyph.guid))) || null;
-      }
-
-      // If the previous exec glyph is a Variable, set it; if it's a Reference, set its target variable.
-      if (prevExec?.type === 'variable') {
-        setRuntimeVar(prevExec, nextValue);
-      } else if (prevExec?.type === 'reference') {
-        const target = getReferenceTarget(prevExec);
-        if (target && target.type === 'variable') {
-          setRuntimeVar(target, nextValue);
-        }
-      }
-
+      setRollingRuntimeValue(nextValue);
       return nextValue;
     }
     case 'boolean': {
-      return evaluateOwnedBooleanGlyph(node, glyph, currentValue, directInput, paramInput);
+      evaluateOwnedBooleanGlyph(node, glyph, currentValue, directInput, paramInput);
+      return currentValue;
     }
     case 'output':
       console.log(currentValue);
@@ -3097,6 +3084,45 @@ function getRuntimeVar(glyph) {
   return __runtimeContext.vars.has(glyph.guid) ? __runtimeContext.vars.get(glyph.guid) : glyph.value;
 }
 
+function getRollingValueGlyph() {
+  const entryNode = getEntryNode();
+  if (!entryNode) {
+    return null;
+  }
+
+  const startInputSource = findIncomingOuterConnection(entryNode, entryNode.startGlyph.guid);
+  if (startInputSource?.type === 'variable') {
+    return startInputSource;
+  }
+
+  if (startInputSource?.type === 'reference') {
+    const target = getReferenceTarget(startInputSource);
+    if (target?.type === 'variable') {
+      return target;
+    }
+  }
+
+  return entryNode.outerGlyphs.find((glyph) => glyph.type === 'variable' && String(glyph.name || '').toUpperCase() === 'IN') || null;
+}
+
+function setRollingRuntimeValue(nextValue) {
+  const rollingGlyph = getRollingValueGlyph();
+  if (!rollingGlyph) {
+    return;
+  }
+
+  setRuntimeVar(rollingGlyph, nextValue);
+}
+
+function getRollingRuntimeValue(fallbackValue = null) {
+  const rollingGlyph = getRollingValueGlyph();
+  if (!rollingGlyph) {
+    return fallbackValue;
+  }
+
+  return getRuntimeVar(rollingGlyph);
+}
+
 function setRuntimeVar(glyph, nextValue) {
   if (!__runtimeContext) {
     __runtimeContext = createRuntimeContext();
@@ -3111,8 +3137,7 @@ function evaluateOuterGlyphValue(glyph, directInput, paramInput, runtimeCtx = __
   }
 
   if (glyph.type === 'value') {
-    ensureValueGlyphInputIsValid(glyph);
-    return glyph.inputIndex === 2 ? paramInput : directInput;
+    return getRollingRuntimeValue(directInput);
   }
 
   if (glyph.type === 'variable') {
