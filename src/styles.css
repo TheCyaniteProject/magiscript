@@ -667,7 +667,8 @@ button {
   height: 100%;
 }
 
-#sceneCanvas.is-connector-hover {
+#sceneCanvas.is-connector-hover,
+#sceneCanvas.is-glyph-hover {
   cursor: pointer;
 }
 

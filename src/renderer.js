@@ -59,6 +59,7 @@ let hoverIfElseGlyphGuid = null;
 let pendingDelete = null;
 let variableCount = 0;
 let labelCount = 0;
+let nodeCount = 0;
 let lineToolEnabled = false;
 const NODE_LINE_TOOL_MIN_SCREEN_FRACTION = 0.05;
 
@@ -145,6 +146,11 @@ function createVariableName() {
 function createLabelName() {
   labelCount += 1;
   return `label_${labelCount}`;
+}
+
+function createNodeName() {
+  nodeCount += 1;
+  return `node_${nodeCount}`;
 }
 
 function getGlyphShortLabel(value, fallback) {
@@ -288,8 +294,33 @@ function getReferenceableGlyphLabel(glyph) {
   return glyph.type;
 }
 
+function isClickableGlyph(glyph) {
+  if (!glyph) {
+    return false;
+  }
+  const t = glyph.type;
+  return t === 'variable'
+    || t === 'label'
+    || t === 'start'
+    || t === 'reference'
+    || t === 'goto'
+    || t === 'boolean'
+    || t === 'ifelse';
+}
+
 function getLabelGlyphLabel(glyph) {
   return glyph?.name?.trim() || 'label';
+}
+
+function getStartGlyphLabel(glyph) {
+  return glyph?.name?.trim() || 'start';
+}
+
+function getJumpTargetLabel(glyph) {
+  if (!glyph) {
+    return '';
+  }
+  return glyph.type === 'start' ? getStartGlyphLabel(glyph) : getLabelGlyphLabel(glyph);
 }
 
 function escapeHtml(value) {
@@ -449,7 +480,7 @@ function getNodeShadowBlur(node) {
 }
 
 function createStartGlyph(parentNodeGuid) {
-  const glyph = new StartGlyph({ guid: createGuid(), parentNodeGuid });
+  const glyph = new StartGlyph({ guid: createGuid(), parentNodeGuid, name: 'start' });
   glyph.lineWidth = BASE_NODE_LINE_WIDTH;
   return glyph;
 }
@@ -535,6 +566,7 @@ function createNode(x, y, radius, parentNodeGuid = null, options = {}) {
   node.lineWidth = getStrokeWidthForRadius(radius);
 
   node.startGlyph = createStartGlyph(node.guid);
+  node.startGlyph.name = (node.isRoot && topLevelNodes.length === 0) ? 'main' : createNodeName();
 
   if (node.isRoot) {
      const defaultVariable = createGlyph('variable', node.guid);
@@ -921,11 +953,7 @@ function drawStartGlyph(startGlyph, renderMode = RENDER_MODE_FULL) {
   context.stroke();
   if (!isLabelHiddenRenderMode(renderMode)) {
     context.shadowBlur = 0;
-    context.fillStyle = '#17120b';
-    context.font = `${GLYPH_FONT_WEIGHT} ${startGlyph.radius * 0.95}px ${GLYPH_FONT_FAMILY}`;
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.fillText('S', startGlyph.x, startGlyph.y + startGlyph.radius * 0.04);
+    drawTextGlyph(startGlyph, getGlyphShortLabel(getStartGlyphLabel(startGlyph), 'S'), 0.6);
   }
   context.restore();
 }
@@ -1051,7 +1079,7 @@ function getGotoTarget(glyph) {
   }
 
   const target = findGlyphByGuid(glyph.targetLabelGuid);
-  return target?.type === 'label' ? target : null;
+  return (target?.type === 'label' || target?.type === 'start') ? target : null;
 }
 
 function drawGotoGlyph(glyph, renderMode = RENDER_MODE_FULL) {
@@ -1069,7 +1097,7 @@ function drawGotoGlyph(glyph, renderMode = RENDER_MODE_FULL) {
   drawPolygonGlyph(glyph, 5, -Math.PI / 2);
   if (!isLabelHiddenRenderMode(renderMode)) {
     context.shadowBlur = 0;
-    drawTextGlyph(glyph, gotoTarget ? getGlyphShortLabel(getLabelGlyphLabel(gotoTarget), 'GO') : 'GO', 0.36);
+    drawTextGlyph(glyph, gotoTarget ? getGlyphShortLabel(getJumpTargetLabel(gotoTarget), 'GO') : 'GO', 0.36);
   }
   context.restore();
 }
@@ -2030,6 +2058,12 @@ function isPointInsideTriangleGlyph(glyph, worldX, worldY) {
   return Math.abs(localX) <= halfWidth;
 }
 
+function isPointInsideDiamondGlyph(glyph, worldX, worldY) {
+  const localX = Math.abs(worldX - glyph.x);
+  const localY = Math.abs(worldY - glyph.y);
+  return (localX + localY) <= glyph.radius;
+}
+
 function isPointInsideOctagonGlyph(glyph, worldX, worldY) {
   const localX = Math.abs(worldX - glyph.x);
   const localY = Math.abs(worldY - glyph.y);
@@ -2044,6 +2078,10 @@ function isPointInsideGlyph(glyph, worldX, worldY) {
 
   if (glyph.type === 'ifelse') {
     return isPointInsideTriangleGlyph(glyph, worldX, worldY);
+  }
+
+  if (glyph.type === 'start') {
+    return isPointInsideDiamondGlyph(glyph, worldX, worldY);
   }
 
   if (isOwnedBooleanGlyph(glyph) && !isOwnedBooleanVisible(glyph)) {
@@ -2083,6 +2121,10 @@ function findGlyphHit(node, worldX, worldY, predicate = () => true) {
     }
   }
 
+  if (predicate(node.startGlyph) && isPointInsideGlyph(node.startGlyph, worldX, worldY)) {
+    return node.startGlyph;
+  }
+
   return null;
 }
 
@@ -2106,7 +2148,7 @@ function getGlyphTooltip(glyph) {
       return { title: 'Label', description: `Name: ${getLabelGlyphLabel(glyph)}` };
     case 'goto': {
       const target = getGotoTarget(glyph);
-      return { title: 'Goto', description: target ? `Target: ${getLabelGlyphLabel(target)}` : 'Target: none' };
+      return { title: 'Goto', description: target ? `Target: ${getJumpTargetLabel(target)}` : 'Target: none' };
     }
     case 'add':
       return { title: 'Add', description: `Operand: ${glyph.operand}` };
@@ -2153,6 +2195,7 @@ function updateCanvasHover(clientX, clientY) {
     || deleteModalBackdrop.classList.contains('is-visible')
   ) {
     canvas.classList.remove('is-connector-hover');
+    canvas.classList.remove('is-glyph-hover');
     hideTooltip();
     return;
   }
@@ -2171,7 +2214,8 @@ function updateCanvasHover(clientX, clientY) {
 
   canvas.classList.toggle('is-connector-hover', Boolean(connectorTarget));
 
-  const hoverGlyph = findCanvasGlyph(worldPoint.x, worldPoint.y, (glyph) => glyph.type !== 'start');
+  const hoverGlyph = findCanvasGlyph(worldPoint.x, worldPoint.y, (glyph) => isClickableGlyph(glyph));
+  canvas.classList.toggle('is-glyph-hover', Boolean(hoverGlyph));
   if (hoverGlyph) {
     hoverCanvasGlyphGuid = hoverGlyph.guid;
     hoverIfElseGlyphGuid = hoverGlyph.type === 'ifelse'
@@ -2193,6 +2237,7 @@ function updateCanvasHover(clientX, clientY) {
 
   hoverCanvasGlyphGuid = null;
   hoverIfElseGlyphGuid = null;
+  canvas.classList.remove('is-glyph-hover');
   if (previousHoverIfElseGlyphGuid !== hoverIfElseGlyphGuid) {
     drawScene();
   }
@@ -2599,7 +2644,7 @@ function openLabelModal(glyph) {
 
 function closeLabelModal(commit) {
   if (commit && activeLabelGlyph) {
-    activeLabelGlyph.name = labelModalNameInput.value.trim() || createLabelName();
+    activeLabelGlyph.name = labelModalNameInput.value.trim() || (activeLabelGlyph.type === 'start' ? createNodeName() : createLabelName());
   }
 
   activeLabelGlyph = null;
@@ -2645,6 +2690,9 @@ function getAllVariableGlyphs(nodes = topLevelNodes, results = []) {
 
 function getAllLabelGlyphs(nodes = topLevelNodes, results = []) {
   nodes.forEach((node) => {
+    if (node.startGlyph) {
+      results.push(node.startGlyph);
+    }
     node.glyphs.forEach((glyph) => {
       if (glyph.type === 'label') {
         results.push(glyph);
@@ -2719,7 +2767,7 @@ function openGotoDropdown(glyph, clientX, clientY) {
   labels.forEach((labelGlyph) => {
     const option = document.createElement('option');
     option.value = labelGlyph.guid;
-    option.textContent = getLabelGlyphLabel(labelGlyph);
+    option.textContent = getJumpTargetLabel(labelGlyph);
     select.append(option);
   });
 
@@ -3115,6 +3163,7 @@ function serializeNode(node, nodes, glyphs) {
     type: 'start',
     parentNodeGuid: node.guid,
     nextGlyphGuid: node.startGlyph.nextGlyphGuid,
+    ...(node.startGlyph.name !== undefined ? { name: node.startGlyph.name } : {}),
   };
 
   node.glyphs.forEach((glyph) => {
@@ -3208,7 +3257,7 @@ function hydrateGlyphFromSerialized(serialized) {
 
   switch (serialized.type) {
     case 'start':
-      glyph = new StartGlyph(base);
+      glyph = new StartGlyph({ ...base, name: serialized.name ?? 'start' });
       break;
     case 'variable':
       glyph = new VariableGlyph({
@@ -3377,6 +3426,7 @@ function deserializeProgram(program) {
     } else {
       // Fallback: create a start glyph if missing.
       node.startGlyph = createStartGlyph(node.guid);
+      node.startGlyph.name = createNodeName();
       node.startGlyph.nextGlyphGuidIsAuto = false;
     }
 
@@ -3413,6 +3463,7 @@ function deserializeProgram(program) {
 
   // Recompute variableCount so newly-created variables keep unique names.
   variableCount = 0;
+  nodeCount = 0;
   for (const glyph of hydratedGlyphByGuid.values()) {
     if (glyph.type !== 'variable' || typeof glyph.name !== 'string') {
       continue;
@@ -3421,6 +3472,18 @@ function deserializeProgram(program) {
     const match = glyph.name.match(/^variable_(\d+)$/);
     if (match) {
       variableCount = Math.max(variableCount, Number(match[1]) || 0);
+    }
+  }
+
+  // Recompute nodeCount so StartGlyph default names remain unique.
+  for (const glyph of hydratedGlyphByGuid.values()) {
+    if (glyph.type !== 'start' || typeof glyph.name !== 'string') {
+      continue;
+    }
+
+    const match = glyph.name.match(/^node_(\d+)$/);
+    if (match) {
+      nodeCount = Math.max(nodeCount, Number(match[1]) || 0);
     }
   }
 
@@ -3449,13 +3512,27 @@ function playProgram() {
 
   while (isExecutionJump(result)) {
     const targetLabel = findGlyphByGuid(result.targetLabelGuid);
-    if (!targetLabel || targetLabel.type !== 'label') {
+    if (!targetLabel) {
       appendMessageLog(`Goto target missing: ${result.targetLabelGuid}`);
       result = result.value;
       break;
     }
 
-    result = executeFromLabel(targetLabel, result.value);
+    if (targetLabel.type === 'label') {
+      result = executeFromLabel(targetLabel, result.value);
+    } else if (targetLabel.type === 'start') {
+      const targetNode = targetLabel.parentNodeGuid ? findNodeByGuid(targetLabel.parentNodeGuid) : null;
+      if (!targetNode) {
+        appendMessageLog(`Goto start target has no node: ${result.targetLabelGuid}`);
+        result = result.value;
+        break;
+      }
+      result = executeNodeFrom(targetNode, targetLabel.guid, result.value, result.value, null);
+    } else {
+      appendMessageLog(`Unsupported goto target type: ${targetLabel.type}`);
+      result = result.value;
+      break;
+    }
   }
 
   console.log('MagiScript execution finished:', result);
@@ -3988,12 +4065,14 @@ canvas.addEventListener('pointerup', (event) => {
     const editableGlyph = findCanvasGlyph(
       worldPoint.x,
       worldPoint.y,
-      (glyph) => glyph.type === 'variable' || glyph.type === 'label' || glyph.type === 'reference' || glyph.type === 'goto' || glyph.type === 'boolean' || glyph.type === 'ifelse',
+      (glyph) => glyph.type === 'variable' || glyph.type === 'label' || glyph.type === 'start' || glyph.type === 'reference' || glyph.type === 'goto' || glyph.type === 'boolean' || glyph.type === 'ifelse',
     );
 
     if (editableGlyph?.type === 'variable') {
       openVariableModal(editableGlyph);
     } else if (editableGlyph?.type === 'label') {
+      openLabelModal(editableGlyph);
+    } else if (editableGlyph?.type === 'start') {
       openLabelModal(editableGlyph);
     } else if (editableGlyph?.type === 'reference') {
       openReferenceModal(editableGlyph);

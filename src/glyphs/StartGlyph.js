@@ -1,6 +1,7 @@
 class StartGlyph extends Glyph {
-  constructor({ guid, parentNodeGuid }) {
+  constructor({ guid, parentNodeGuid, name }) {
     super({ guid, type: 'start', parentNodeGuid });
+    this.name = name;
   }
 
   getBoundaryDistance(unitX, unitY) {
