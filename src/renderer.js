@@ -75,20 +75,14 @@ const wireDragState = {
   toWorld: null,
 };
 
-const panState = {
-  active: false,
-  moved: false,
-  pointerId: null,
-  lastX: 0,
-  lastY: 0,
-};
-
 const dragState = {
   active: false,
   moved: false,
   pointerId: null,
   glyph: null,
   sourceNode: null,
+  lastX: 0,
+  lastY: 0,
   worldX: 0,
   worldY: 0,
 };
@@ -1462,7 +1456,10 @@ function drawNodeConnections(node, nodeLineToolActive, renderMode = RENDER_MODE_
   node.outerGlyphs.forEach((glyph) => {
     const nextGuid = glyph.getOutputTarget(0);
     if (nextGuid) {
-      const targetPort = glyph.getOutputTargetPort ? glyph.getOutputTargetPort(0) : { kind: 'param', index: 0 };
+      const rawTargetPort = glyph.getOutputTargetPort ? glyph.getOutputTargetPort(0) : { kind: 'param', index: 0 };
+      const targetPort = isOuterParamGlyphType(glyph)
+        ? { kind: 'param', index: Number.isFinite(rawTargetPort?.index) ? rawTargetPort.index : 0 }
+        : rawTargetPort;
       const paramIndex = targetPort.kind === 'param' ? targetPort.index : 0;
       outputTargetBySource.set(createOutputKey(glyph.guid, 0), nextGuid);
       paramSourceByTarget.set(createParamKey(nextGuid, paramIndex), glyph.guid);
@@ -1573,7 +1570,10 @@ function drawNodeConnections(node, nodeLineToolActive, renderMode = RENDER_MODE_
       return;
     }
 
-    const targetPort = glyph.getOutputTargetPort ? glyph.getOutputTargetPort(0) : { kind: 'param', index: 0 };
+    const rawTargetPort = glyph.getOutputTargetPort ? glyph.getOutputTargetPort(0) : { kind: 'param', index: 0 };
+    const targetPort = isOuterParamGlyphType(glyph)
+      ? { kind: 'param', index: Number.isFinite(rawTargetPort?.index) ? rawTargetPort.index : 0 }
+      : rawTargetPort;
     const targetPoint = targetPort.kind === 'param'
       ? (targetGlyph.io?.params?.[targetPort.index] || targetGlyph.io?.params?.[0] || targetGlyph.io?.param || targetGlyph.io?.input)
       : (targetGlyph.io?.input || targetGlyph.io?.params?.[0] || targetGlyph.io?.param);
@@ -1989,6 +1989,8 @@ function clearGlyphDrag() {
   dragState.pointerId = null;
   dragState.glyph = null;
   dragState.sourceNode = null;
+  dragState.lastX = 0;
+  dragState.lastY = 0;
   dragState.worldX = 0;
   dragState.worldY = 0;
 }
@@ -2119,8 +2121,7 @@ function updateCanvasHover(clientX, clientY) {
   const previousHoverIfElseGlyphGuid = hoverIfElseGlyphGuid;
 
   if (
-    panState.active
-    || dragState.active
+    dragState.active
     || wireDragState.active
     || activeValueDropdown
     || activeGotoDropdown
@@ -2820,6 +2821,7 @@ function executeGlyph(node, glyph, currentValue, directInput, paramInput) {
     coerceNumber,
     logOutput: (value) => {
       console.log(value);
+      __executionOutputLines.push(value === null || value === undefined ? 'null' : String(value));
       appendMessageLog(value);
     },
   });
@@ -2838,6 +2840,7 @@ function findIncomingOuterConnection(node, targetGuid) {
 
 // Runtime context to avoid mutating glyph values during execution
 let __runtimeContext = null;
+let __executionOutputLines = [];
 
 function resetBooleanRuntimeState() {
   runtimeContextService.resetBooleanRuntimeState(getAllReferenceableGlyphs());
@@ -3235,6 +3238,7 @@ function runProgram(stepMode = false) {
       return;
     }
 
+    __executionOutputLines = [];
     stepExecutionState = null;
     const entryNode = getEntryNode();
     if (!entryNode) {
@@ -3277,6 +3281,10 @@ function runProgram(stepMode = false) {
     setProgramButtonsBusy(false);
     isProgramRunning = false;
   }
+}
+
+function getLastExecutionOutputLines() {
+  return [...__executionOutputLines];
 }
 
 function getNodeStartY(node) {
@@ -3434,15 +3442,6 @@ function focusParentNode() {
   }
 
   focusNode(parentNode);
-}
-
-function stopPanning(pointerId) {
-  if (panState.pointerId !== pointerId) {
-    return;
-  }
-
-  panState.active = false;
-  panState.pointerId = null;
 }
 
 glyphCards.forEach((card) => {
@@ -3776,12 +3775,8 @@ canvas.addEventListener('pointerdown', (event) => {
   }
 
   if (connectorTarget) {
-    panState.active = true;
-    panState.moved = false;
-    panState.pointerId = event.pointerId;
-    panState.lastX = event.clientX;
-    panState.lastY = event.clientY;
-    canvas.setPointerCapture(event.pointerId);
+    focusNode(connectorTarget);
+    updateCanvasHover(event.clientX, event.clientY);
     return;
   }
 
@@ -3792,8 +3787,8 @@ canvas.addEventListener('pointerdown', (event) => {
     dragState.pointerId = event.pointerId;
     dragState.glyph = draggableGlyph;
     dragState.sourceNode = findNodeByGuid(draggableGlyph.parentNodeGuid);
-    panState.lastX = event.clientX;
-    panState.lastY = event.clientY;
+    dragState.lastX = event.clientX;
+    dragState.lastY = event.clientY;
     dragState.worldX = draggableGlyph.x;
     dragState.worldY = draggableGlyph.y;
     canvas.setPointerCapture(event.pointerId);
@@ -3814,15 +3809,15 @@ canvas.addEventListener('pointermove', (event) => {
   }
 
   if (dragState.active && dragState.pointerId === event.pointerId) {
-    const deltaX = event.clientX - panState.lastX;
-    const deltaY = event.clientY - panState.lastY;
+    const deltaX = event.clientX - dragState.lastX;
+    const deltaY = event.clientY - dragState.lastY;
 
     if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
       dragState.moved = true;
     }
 
-    panState.lastX = event.clientX;
-    panState.lastY = event.clientY;
+    dragState.lastX = event.clientX;
+    dragState.lastY = event.clientY;
     const rect = canvas.getBoundingClientRect();
     const worldPoint = screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
     dragState.worldX = worldPoint.x;
@@ -3831,20 +3826,7 @@ canvas.addEventListener('pointermove', (event) => {
     return;
   }
 
-  if (!panState.active || panState.pointerId !== event.pointerId) {
-    updateCanvasHover(event.clientX, event.clientY);
-    return;
-  }
-
-  const deltaX = event.clientX - panState.lastX;
-  const deltaY = event.clientY - panState.lastY;
-
-  if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
-    panState.moved = true;
-  }
-
-  panState.lastX = event.clientX;
-  panState.lastY = event.clientY;
+  updateCanvasHover(event.clientX, event.clientY);
 });
 
 canvas.addEventListener('pointerup', (event) => {
@@ -3869,31 +3851,14 @@ canvas.addEventListener('pointerup', (event) => {
     return;
   }
 
-  if (!panState.moved) {
-    const rect = canvas.getBoundingClientRect();
-    const worldPoint = screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
-
-    const canvasRoots = getCanvasRoots();
-    const maxConnectorDepth = focusedNode ? 1 : Number.POSITIVE_INFINITY;
-    for (let index = canvasRoots.length - 1; index >= 0; index -= 1) {
-      const connectorTarget = findConnectorTarget(canvasRoots[index], worldPoint.x, worldPoint.y, 0, maxConnectorDepth);
-      if (connectorTarget) {
-        focusNode(connectorTarget);
-        stopPanning(event.pointerId);
-        updateCanvasHover(event.clientX, event.clientY);
-        return;
-      }
-    }
-
-    const editableGlyph = findCanvasGlyph(
-      worldPoint.x,
-      worldPoint.y,
-      (glyph) => isClickableGlyph(glyph),
-    );
-    handleGlyphClick(editableGlyph, event.clientX, event.clientY);
-  }
-
-  stopPanning(event.pointerId);
+  const rect = canvas.getBoundingClientRect();
+  const worldPoint = screenToWorld(event.clientX - rect.left, event.clientY - rect.top);
+  const editableGlyph = findCanvasGlyph(
+    worldPoint.x,
+    worldPoint.y,
+    (glyph) => isClickableGlyph(glyph),
+  );
+  handleGlyphClick(editableGlyph, event.clientX, event.clientY);
   updateCanvasHover(event.clientX, event.clientY);
 });
 
@@ -3914,7 +3879,6 @@ canvas.addEventListener('pointercancel', (event) => {
     drawScene();
   }
 
-  stopPanning(event.pointerId);
   canvas.classList.remove('is-connector-hover');
   hideTooltip();
 });
@@ -3923,10 +3887,6 @@ canvas.addEventListener('pointerleave', () => {
   canvas.classList.remove('is-connector-hover');
   hideTooltip();
 });
-
-canvas.addEventListener('wheel', (event) => {
-  event.preventDefault();
-}, { passive: false });
 
 ['dragenter', 'dragover'].forEach((eventName) => {
   dropZone.addEventListener(eventName, (event) => {
@@ -3987,6 +3947,62 @@ window.addEventListener('load', () => {
 
   window.MagiScript = {
     serializeProgram,
+    deserializeProgram,
     playProgram,
+    runProgram,
+    getLastExecutionOutputLines,
   };
+
+  const testApi = window.SpellcircleTest;
+  if (testApi?.getConfig && testApi?.loadProgram && testApi?.report) {
+    void (async () => {
+      const config = await testApi.getConfig();
+      if (!config?.enabled) {
+        return;
+      }
+
+      try {
+        const loadResult = await testApi.loadProgram();
+        if (!loadResult?.ok || !loadResult?.program) {
+          await testApi.report({
+            ok: false,
+            error: loadResult?.error || 'Unable to load test program.',
+            actualOutputLines: [],
+          });
+          return;
+        }
+
+        const loaded = deserializeProgram(loadResult.program);
+        if (!loaded) {
+          await testApi.report({
+            ok: false,
+            error: 'Unable to deserialize test program.',
+            actualOutputLines: [],
+          });
+          return;
+        }
+
+        runProgram(false);
+        const actualOutputLines = getLastExecutionOutputLines();
+        const expectedOutputLines = Array.isArray(config.expectedOutputLines)
+          ? config.expectedOutputLines.map((line) => String(line))
+          : [];
+        const matches = expectedOutputLines.length === actualOutputLines.length
+          && expectedOutputLines.every((line, index) => line === actualOutputLines[index]);
+
+        await testApi.report({
+          ok: matches,
+          expectedOutputLines,
+          actualOutputLines,
+          filePath: loadResult.filePath || null,
+        });
+      } catch (error) {
+        await testApi.report({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          actualOutputLines: getLastExecutionOutputLines(),
+        });
+      }
+    })();
+  }
 });

@@ -3,6 +3,29 @@ const path = require('path');
 const fs = require('fs/promises');
 
 const DEBUG_ENABLED = process.argv.includes('--debug');
+const GUI_TEST_ENABLED = process.argv.includes('--test-demo');
+const GUI_TEST_TIMEOUT_MS = 30000;
+const GUI_TEST_EXPECTED_OUTPUT_LINES = [
+  '1',
+  '2',
+  '4',
+  '8',
+  '16',
+  '32',
+  '64',
+  '128',
+  '256',
+  '512',
+  '1024',
+];
+
+const guiTestState = {
+  enabled: GUI_TEST_ENABLED,
+  programPath: path.join(__dirname, 'demo', 'ten-factor.spellcircle'),
+  expectedOutputLines: GUI_TEST_EXPECTED_OUTPUT_LINES,
+  completed: false,
+  timeoutHandle: null,
+};
 
 function emitSpellcircleDebug(win, step, details = {}) {
   if (!DEBUG_ENABLED) {
@@ -123,6 +146,7 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
+    show: !guiTestState.enabled,
     minWidth: 960,
     minHeight: 640,
     backgroundColor: '#d8c59a',
@@ -137,6 +161,70 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
 }
 
+ipcMain.handle('spellcircle:test:get-config', async () => {
+  return {
+    enabled: guiTestState.enabled,
+    programPath: guiTestState.programPath,
+    expectedOutputLines: guiTestState.expectedOutputLines,
+  };
+});
+
+ipcMain.handle('spellcircle:test:load-program', async () => {
+  if (!guiTestState.enabled) {
+    return { ok: false, error: 'GUI test mode is not enabled.' };
+  }
+
+  try {
+    const json = await fs.readFile(guiTestState.programPath, 'utf8');
+    const program = JSON.parse(json);
+    return {
+      ok: true,
+      filePath: guiTestState.programPath,
+      program,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+});
+
+ipcMain.handle('spellcircle:test:report', async (_event, payload) => {
+  if (!guiTestState.enabled || guiTestState.completed) {
+    return { accepted: false };
+  }
+
+  guiTestState.completed = true;
+  if (guiTestState.timeoutHandle) {
+    clearTimeout(guiTestState.timeoutHandle);
+    guiTestState.timeoutHandle = null;
+  }
+
+  const ok = Boolean(payload?.ok);
+  const actualOutputLines = Array.isArray(payload?.actualOutputLines)
+    ? payload.actualOutputLines.map((line) => String(line))
+    : [];
+
+  if (ok) {
+    console.log('[GUI TEST] PASS');
+    process.exitCode = 0;
+  } else {
+    console.error('[GUI TEST] FAIL');
+    if (payload?.error) {
+      console.error('[GUI TEST] Error:', String(payload.error));
+    }
+    console.error('[GUI TEST] Expected output:');
+    console.error(guiTestState.expectedOutputLines.join('\n'));
+    console.error('[GUI TEST] Actual output:');
+    console.error(actualOutputLines.join('\n'));
+    process.exitCode = 1;
+  }
+
+  app.quit();
+  return { accepted: true };
+});
+
 // Mirror renderer message log lines to the main process stdout
 ipcMain.on('spellcircle:console-log', (_event, message) => {
   try {
@@ -148,6 +236,19 @@ ipcMain.on('spellcircle:console-log', (_event, message) => {
 
 app.whenReady().then(() => {
   createWindow();
+
+  if (guiTestState.enabled) {
+    guiTestState.timeoutHandle = setTimeout(() => {
+      if (guiTestState.completed) {
+        return;
+      }
+
+      guiTestState.completed = true;
+      console.error(`[GUI TEST] FAIL: timed out after ${GUI_TEST_TIMEOUT_MS}ms`);
+      process.exitCode = 1;
+      app.quit();
+    }, GUI_TEST_TIMEOUT_MS);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

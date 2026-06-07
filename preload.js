@@ -47,3 +47,9 @@ contextBridge.exposeInMainWorld('SpellcircleConsole', {
     }
   },
 });
+
+contextBridge.exposeInMainWorld('SpellcircleTest', {
+  getConfig: async () => ipcRenderer.invoke('spellcircle:test:get-config'),
+  loadProgram: async () => ipcRenderer.invoke('spellcircle:test:load-program'),
+  report: async (payload) => ipcRenderer.invoke('spellcircle:test:report', payload),
+});

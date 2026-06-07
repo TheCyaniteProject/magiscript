@@ -220,8 +220,29 @@ class ProgramPersistenceService {
         : [],
     );
 
-    glyph.setOutputTarget(serialized.nextGlyphGuid ?? null, 0, outputTargetPortByIndex.get(0) || null);
-    glyph.setOutputTarget(serialized.nextGlyphGuidFalse ?? null, 1, outputTargetPortByIndex.get(1) || null);
+    const isOuterParamSource = serialized.ring === 'outer'
+      && (serialized.type === 'variable'
+        || serialized.type === 'reference'
+        || serialized.type === 'value'
+        || serialized.type === 'boolean');
+    const getFallbackTargetPort = (outputIndex) => {
+      if (!isOuterParamSource || outputIndex !== 0) {
+        return null;
+      }
+
+      return { kind: 'param', index: 0 };
+    };
+
+    glyph.setOutputTarget(
+      serialized.nextGlyphGuid ?? null,
+      0,
+      outputTargetPortByIndex.get(0) || getFallbackTargetPort(0),
+    );
+    glyph.setOutputTarget(
+      serialized.nextGlyphGuidFalse ?? null,
+      1,
+      outputTargetPortByIndex.get(1) || getFallbackTargetPort(1),
+    );
     if (Array.isArray(serialized.outputTargets)) {
       serialized.outputTargets
         .filter((entry) => entry && Number.isFinite(entry.outputIndex) && typeof entry.targetGuid === 'string')
@@ -230,7 +251,11 @@ class ProgramPersistenceService {
             return;
           }
 
-          glyph.setOutputTarget(entry.targetGuid, entry.outputIndex, outputTargetPortByIndex.get(entry.outputIndex) || null);
+          glyph.setOutputTarget(
+            entry.targetGuid,
+            entry.outputIndex,
+            outputTargetPortByIndex.get(entry.outputIndex) || getFallbackTargetPort(entry.outputIndex),
+          );
         });
     }
     glyph.x = 0;
