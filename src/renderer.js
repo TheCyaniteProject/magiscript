@@ -2192,7 +2192,10 @@ function getGlyphTooltip(glyph) {
     case 'ifelse':
       return { title: 'If / Else', description: `Mode: ${getIfElseModeLabel(glyph.mode)}. First output is pass, second output is fail.` };
     case 'value':
-      return { title: glyph.name, description: '' };
+      return {
+        title: `${glyph.name} (Deprecated)`,
+        description: 'Kept for compatibility. Runtime already carries the rolling value without this glyph.',
+      };
     default:
       return null;
   }
@@ -3069,6 +3072,15 @@ function findIncomingOuterConnection(node, targetGuid) {
 // Runtime context to avoid mutating glyph values during execution
 let __runtimeContext = null;
 
+function resetBooleanRuntimeState() {
+  const referenceable = getAllReferenceableGlyphs();
+  referenceable.forEach((glyph) => {
+    if (glyph.type === 'boolean') {
+      glyph.lastResult = 0;
+    }
+  });
+}
+
 function createRuntimeContext() {
   const vars = new Map();
   getAllVariableGlyphs().forEach((v) => {
@@ -3397,6 +3409,7 @@ function initializeStepExecution() {
   layoutAllNodes();
   updateNodeOrdering(entryNode);
   __runtimeContext = createRuntimeContext();
+  resetBooleanRuntimeState();
 
   stepExecutionState = {
     stack: [createStepFrameFromNodeStart(entryNode, null)],
@@ -3518,6 +3531,7 @@ function runProgram(stepMode = false) {
     layoutAllNodes();
     updateNodeOrdering(entryNode);
     __runtimeContext = createRuntimeContext();
+    resetBooleanRuntimeState();
     let result = executeNode(entryNode, null);
 
     while (isExecutionJump(result)) {
