@@ -3,6 +3,30 @@ class SubtractGlyph extends Glyph {
     super({ guid, type: 'subtract', parentNodeGuid });
     this.operand = operand;
   }
+
+  getTooltip() {
+    return { title: 'Subtract', description: `Operand: ${this.operand}` };
+  }
+
+  execute({
+    node,
+    currentValue,
+    directInput,
+    paramInput,
+    findIncomingOuterConnection,
+    evaluateOuterGlyphValue,
+    setRollingRuntimeValue,
+    coerceNumber,
+    runtimeContext,
+  }) {
+    const paramSource = findIncomingOuterConnection(node, this.guid);
+    const operandValue = paramSource
+      ? evaluateOuterGlyphValue(paramSource, directInput, paramInput, runtimeContext)
+      : 1;
+    const nextValue = coerceNumber(currentValue) - coerceNumber(operandValue);
+    setRollingRuntimeValue(nextValue);
+    return nextValue;
+  }
 }
 
 globalThis.SubtractGlyph = SubtractGlyph;

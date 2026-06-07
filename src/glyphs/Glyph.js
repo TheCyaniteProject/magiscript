@@ -109,6 +109,35 @@ class Glyph {
       })
       : null;
   }
+
+  getOutputTarget(outputIndex = 0) {
+    return outputIndex === 0 ? (this.nextGlyphGuid ?? null) : null;
+  }
+
+  setOutputTarget(targetGuid, outputIndex = 0) {
+    if (outputIndex !== 0) {
+      return;
+    }
+
+    this.nextGlyphGuid = targetGuid ?? null;
+    this.nextGlyphGuidIsAuto = false;
+  }
+
+  disconnectOutput(outputIndex = 0) {
+    this.setOutputTarget(null, outputIndex);
+  }
+
+  getTooltip() {
+    return null;
+  }
+
+  isClickable() {
+    return false;
+  }
+
+  execute({ currentValue }) {
+    return currentValue;
+  }
 }
 
 globalThis.Glyph = Glyph;
